@@ -33,6 +33,25 @@ def _strftime(ts: int) -> str:
 templates.env.filters["strftime"] = _strftime
 
 
+def _split_ranked_results(results: list[dict]) -> tuple[list[dict], list[dict]]:
+    if not results:
+        return [], []
+
+    distances = [float(r.get("distance", 0.0)) for r in results]
+    best = min(distances)
+    worst = max(distances)
+    spread = max(worst - best, 1e-9)
+
+    for result in results:
+        distance = float(result.get("distance", worst))
+        result["score"] = max(0, min(100, round((1 - ((distance - best) / spread)) * 100)))
+
+    close_count = min(12, max(4, len(results) // 3))
+    close_results = results[:close_count]
+    other_results = results[close_count:]
+    return close_results, other_results
+
+
 async def _load_models_and_start_indexer() -> None:
     try:
         await asyncio.to_thread(models.ensure_models)
@@ -104,11 +123,15 @@ async def search_photos(
         except Exception as exc:
             error = str(exc)
 
+    close_results, other_results = _split_ranked_results(results)
+
     return templates.TemplateResponse(
         "_results.html",
         {
             "request": request,
             "results": results,
+            "close_results": close_results,
+            "other_results": other_results,
             "query": q,
             "error": error,
         },

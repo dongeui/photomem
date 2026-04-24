@@ -44,6 +44,13 @@
     line-height: 1.25;
     margin-bottom: 0.25rem;
   }
+
+  .photo-score {
+    color: #8aa4ff;
+    font-size: 0.7rem;
+    line-height: 1.25;
+    margin-bottom: 0.25rem;
+  }
 </style>
 
 <div class="photo-grid">
@@ -61,6 +68,9 @@
       </div>
       {% if photo.city %}
       <div class="photo-place">{{ photo.city }}{% if photo.country %}, {{ photo.country }}{% endif %}</div>
+      {% endif %}
+      {% if photo.score is defined %}
+      <div class="photo-score">관련도 {{ photo.score }}%</div>
       {% endif %}
       <div class="photo-path">{{ photo.file_path }}</div>
     </div>

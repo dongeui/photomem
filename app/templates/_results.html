@@ -11,9 +11,56 @@
   </p>
 
 {% else %}
-  <p style="color:#666; font-size:0.78rem; margin-bottom:0.75rem;">
+  <style>
+    .result-section {
+      margin-bottom: 1.75rem;
+    }
+
+    .result-heading {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: #d8d8d8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .result-heading::after {
+      content: "";
+      height: 1px;
+      flex: 1;
+      background: #262626;
+    }
+
+    .result-subtext {
+      color: #666;
+      font-size: 0.74rem;
+      font-weight: 400;
+    }
+  </style>
+
+  <p style="color:#666; font-size:0.78rem; margin-bottom:0.9rem;">
     {{ results|length }}개 결과 - "{{ query }}"
   </p>
-  {% set photos = results %}
-  {% include "_photo_cards.html" %}
+
+  <section class="result-section">
+    <div class="result-heading">
+      검색 조건에 가까운 결과
+      <span class="result-subtext">{{ close_results|length }}개</span>
+    </div>
+    {% set photos = close_results %}
+    {% include "_photo_cards.html" %}
+  </section>
+
+  {% if other_results %}
+  <section class="result-section">
+    <div class="result-heading">
+      낮은 관련도 후보
+      <span class="result-subtext">{{ other_results|length }}개</span>
+    </div>
+    {% set photos = other_results %}
+    {% include "_photo_cards.html" %}
+  </section>
+  {% endif %}
 {% endif %}
