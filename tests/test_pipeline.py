@@ -86,6 +86,45 @@ def test_mark_error(initialized_db):
     assert "CLIP" in row["error_msg"]
 
 
+def test_update_and_search_ocr(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/ocr-hit.jpg", "ocrhash")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    db.update_photo_ocr(conn, photo_id, "동의서 signed consent form")
+
+    results = db.search_by_ocr(conn, "동의", limit=5)
+    assert results
+    assert results[0]["id"] == photo_id
+    assert "consent" in results[0]["ocr_text"]
+
+
+def test_list_photos_includes_ocr_text(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/list-ocr.jpg", "listocr")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    db.update_photo_ocr(conn, photo_id, "receipt total 12900")
+
+    photos = db.list_photos(conn, limit=10)
+    matching = next(photo for photo in photos if photo["id"] == photo_id)
+    assert "receipt" in matching["ocr_text"]
+
+
+def test_get_missing_ocr_paths(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/missing-ocr.jpg", "missingocr")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    assert db.get_photo_id(conn, "/fake/missing-ocr.jpg") == photo_id
+    assert not db.photo_has_ocr(conn, photo_id)
+
+    missing_before = db.get_missing_ocr_paths(conn)
+    assert "/fake/missing-ocr.jpg" in missing_before
+
+    db.update_photo_ocr(conn, photo_id, "hello world")
+    assert db.photo_has_ocr(conn, photo_id)
+    missing_after = db.get_missing_ocr_paths(conn)
+    assert "/fake/missing-ocr.jpg" not in missing_after
+
+
 def test_thumbnail_path_bucketing():
     # Ensure thumbnails spread across subdirs
     p1 = thumbnails.thumb_path(1)

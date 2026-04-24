@@ -49,6 +49,12 @@ def init_db() -> None:
             error_msg   TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS photo_ocr (
+            photo_id     INTEGER PRIMARY KEY,
+            text_content TEXT NOT NULL DEFAULT '',
+            updated_at   INTEGER NOT NULL
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_photos
             USING vec0(embedding float[512]);
 
@@ -58,8 +64,20 @@ def init_db() -> None:
     """)
     _ensure_column(conn, "photos", "file_size", "INTEGER")
     _ensure_column(conn, "photos", "modified_at", "INTEGER")
+    _ensure_ocr_fts(conn)
     conn.commit()
+    _rebuild_ocr_fts(conn)
     conn.close()
+
+
+def _ensure_ocr_fts(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE IF EXISTS photo_ocr_fts")
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE photo_ocr_fts
+        USING fts5(photo_id UNINDEXED, text_content)
+        """
+    )
 
 
 def _ensure_column(
@@ -74,6 +92,19 @@ def _ensure_column(
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
+def _rebuild_ocr_fts(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM photo_ocr_fts")
+    conn.execute(
+        """
+        INSERT INTO photo_ocr_fts(photo_id, text_content)
+        SELECT photo_id, text_content
+        FROM photo_ocr
+        WHERE text_content != ''
+        """
+    )
+    conn.commit()
+
+
 def requeue_pending(conn: sqlite3.Connection) -> int:
     """Return count of pending rows after container restart — they are already pending."""
     cur = conn.execute("SELECT COUNT(*) FROM photos WHERE status='pending'")
@@ -82,6 +113,33 @@ def requeue_pending(conn: sqlite3.Connection) -> int:
 
 def get_pending_paths(conn: sqlite3.Connection) -> list[str]:
     cur = conn.execute("SELECT file_path FROM photos WHERE status='pending'")
+    return [row[0] for row in cur.fetchall()]
+
+
+def get_photo_id(conn: sqlite3.Connection, file_path: str) -> int | None:
+    cur = conn.execute("SELECT id FROM photos WHERE file_path=?", (file_path,))
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
+def photo_has_ocr(conn: sqlite3.Connection, photo_id: int) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM photo_ocr WHERE photo_id=? AND text_content != ''",
+        (photo_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def get_missing_ocr_paths(conn: sqlite3.Connection) -> list[str]:
+    cur = conn.execute(
+        """
+        SELECT p.file_path
+        FROM photos AS p
+        LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+        WHERE p.status='indexed'
+          AND (o.photo_id IS NULL OR o.text_content = '')
+        """
+    )
     return [row[0] for row in cur.fetchall()]
 
 
@@ -154,6 +212,26 @@ def update_photo_indexed(
     conn.commit()
 
 
+def update_photo_ocr(conn: sqlite3.Connection, photo_id: int, text_content: str) -> None:
+    now = int(time.time())
+    conn.execute(
+        """INSERT INTO photo_ocr (photo_id, text_content, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(photo_id) DO UPDATE SET
+             text_content=excluded.text_content,
+             updated_at=excluded.updated_at
+        """,
+        (photo_id, text_content, now),
+    )
+    conn.execute("DELETE FROM photo_ocr_fts WHERE photo_id=?", (photo_id,))
+    if text_content:
+        conn.execute(
+            "INSERT INTO photo_ocr_fts(photo_id, text_content) VALUES (?, ?)",
+            (photo_id, text_content),
+        )
+    conn.commit()
+
+
 def mark_photo_error(conn: sqlite3.Connection, photo_id: int, error: str) -> None:
     conn.execute(
         "UPDATE photos SET status='error', error_msg=? WHERE id=?",
@@ -182,10 +260,12 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 
 def list_photos(conn: sqlite3.Connection, limit: int = 120, offset: int = 0) -> list[dict]:
     cur = conn.execute(
-        """SELECT id, file_path, created_at, city, country, status, error_msg
-           FROM photos
-           WHERE status='indexed'
-           ORDER BY COALESCE(created_at, indexed_at, 0) DESC, id DESC
+        """SELECT p.id, p.file_path, p.created_at, p.city, p.country, p.status, p.error_msg,
+                  o.text_content AS ocr_text
+           FROM photos AS p
+           LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+           WHERE p.status='indexed'
+           ORDER BY COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC
            LIMIT ? OFFSET ?""",
         (limit, offset),
     )
@@ -218,22 +298,25 @@ def search_by_embedding(
     id_list = [r[0] for r in candidate_ids]
     dist_map = {r[0]: r[1] for r in candidate_ids}
 
-    where_clauses = [f"id IN ({placeholders})"]
+    where_clauses = [f"p.id IN ({placeholders})"]
     params: list = id_list[:]
 
     if city_filter:
-        where_clauses.append("city = ?")
+        where_clauses.append("p.city = ?")
         params.append(city_filter)
     if date_from:
-        where_clauses.append("created_at >= ?")
+        where_clauses.append("p.created_at >= ?")
         params.append(date_from)
     if date_to:
-        where_clauses.append("created_at <= ?")
+        where_clauses.append("p.created_at <= ?")
         params.append(date_to)
 
     where_sql = " AND ".join(where_clauses)
     cur = conn.execute(
-        f"SELECT id, file_path, created_at, city, country FROM photos WHERE {where_sql}",
+        f"""SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text
+            FROM photos AS p
+            LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+            WHERE {where_sql}""",
         params,
     )
     rows = cur.fetchall()
@@ -244,9 +327,49 @@ def search_by_embedding(
             "created_at": row["created_at"],
             "city":       row["city"],
             "country":    row["country"],
+            "ocr_text":   row["ocr_text"],
             "distance":   dist_map[row["id"]],
         }
         for row in rows
     ]
     results.sort(key=lambda r: r["distance"])
     return results[:limit]
+
+
+def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list[dict]:
+    cleaned = query.strip()
+    if not cleaned:
+        return []
+
+    term = cleaned.replace('"', '""')
+    cur = conn.execute(
+        """
+        SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
+               bm25(photo_ocr_fts) AS rank
+        FROM photo_ocr_fts
+        JOIN photo_ocr AS o ON o.photo_id = photo_ocr_fts.photo_id
+        JOIN photos AS p ON p.id = o.photo_id
+        WHERE photo_ocr_fts MATCH ?
+          AND p.status='indexed'
+        ORDER BY rank
+        LIMIT ?
+        """,
+        (f'"{term}" OR {term}*', limit),
+    )
+    rows = cur.fetchall()
+    results = []
+    for row in rows:
+        results.append(
+            {
+                "id": row["id"],
+                "file_path": row["file_path"],
+                "created_at": row["created_at"],
+                "city": row["city"],
+                "country": row["country"],
+                "ocr_text": row["ocr_text"],
+                "ocr_rank": float(row["rank"]),
+                "match_reason": "ocr",
+                "distance": None,
+            }
+        )
+    return results

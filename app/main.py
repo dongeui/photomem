@@ -37,7 +37,24 @@ def _split_ranked_results(results: list[dict]) -> tuple[list[dict], list[dict]]:
     if not results:
         return [], []
 
-    distances = [float(r.get("distance", 0.0)) for r in results]
+    ranked = [result for result in results if result.get("rank_score") is not None]
+    if ranked:
+        for result in ranked:
+            result["score"] = max(0, min(100, round(float(result["rank_score"]) * 100)))
+
+        close_results = [result for result in results if float(result.get("rank_score", 0.0)) >= 0.55]
+        if not close_results:
+            close_count = min(12, max(4, len(results) // 3))
+            close_results = results[:close_count]
+        close_ids = {result["id"] for result in close_results}
+        other_results = [result for result in results if result["id"] not in close_ids]
+        return close_results, other_results
+
+    distances = [float(r.get("distance", 0.0)) for r in results if r.get("distance") is not None]
+    if not distances:
+        close_count = min(12, max(4, len(results) // 3))
+        return results[:close_count], results[close_count:]
+
     best = min(distances)
     worst = max(distances)
     spread = max(worst - best, 1e-9)

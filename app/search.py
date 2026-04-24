@@ -22,23 +22,46 @@ def search(
     if not query.strip():
         return []
 
-    try:
-        query_bytes = models.encode_text(query.strip())
-    except Exception as exc:
-        logger.error("Text encoding failed: %s", exc)
-        return []
-
+    cleaned = query.strip()
     conn = db.get_connection()
     try:
-        results = db.search_by_embedding(
-            conn,
-            query_bytes,
-            limit=limit,
-            city_filter=city_filter,
-            date_from=date_from,
-            date_to=date_to,
-        )
+        ocr_results = db.search_by_ocr(conn, cleaned, limit=limit)
+        try:
+            query_bytes = models.encode_text(cleaned)
+            clip_results = db.search_by_embedding(
+                conn,
+                query_bytes,
+                limit=limit,
+                city_filter=city_filter,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except Exception as exc:
+            logger.error("Text encoding failed: %s", exc)
+            clip_results = []
     finally:
         conn.close()
 
-    return results
+    merged: list[dict] = []
+    seen_ids: set[int] = set()
+
+    for result in ocr_results:
+        result["rank_score"] = 1.0
+        merged.append(result)
+        seen_ids.add(result["id"])
+
+    for index, result in enumerate(clip_results):
+        result["match_reason"] = result.get("match_reason") or "clip"
+        result["rank_score"] = max(0.0, 0.65 - (index * 0.01))
+        if result["id"] in seen_ids:
+            existing = next(item for item in merged if item["id"] == result["id"])
+            existing["match_reason"] = "ocr+clip"
+            existing["distance"] = result.get("distance")
+            existing["rank_score"] = 1.0
+            if result.get("ocr_text") and not existing.get("ocr_text"):
+                existing["ocr_text"] = result["ocr_text"]
+            continue
+        merged.append(result)
+        seen_ids.add(result["id"])
+
+    return merged[:limit]
