@@ -24,6 +24,7 @@ The first run downloads the CLIP model and stores generated data in the `photome
 | `PHOTOMEM_CACHE` | `/app/cache` | Cache directory for thumbnails and generated files |
 | `PHOTOMEM_INDEX_WORKERS` | `1` | Concurrent CLIP image encoders |
 | `PHOTOMEM_TORCH_THREADS` | auto | CPU threads per encoder; total CPU use is roughly workers x threads |
+| `PHOTOMEM_SCAN_INTERVAL` | `300` | Seconds between folder scans for new or changed photos |
 
 ## Development
 

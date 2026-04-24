@@ -33,6 +33,8 @@ _running = False
 _last_heartbeat = 0.0
 _active_paths: dict[int, tuple[str, float]] = {}
 _last_completed_at: float | None = None
+_last_scan_at: float | None = None
+_last_scan_enqueued = 0
 
 
 def _file_hash(path: str) -> str:
@@ -130,11 +132,18 @@ async def _process_path(
         return
 
     try:
+        stat = os.stat(path)
+        file_size = stat.st_size
+        modified_at = int(stat.st_mtime)
+    except OSError:
+        return
+
+    try:
         file_hash = _file_hash(path)
     except OSError:
         return
 
-    photo_id = db.upsert_photo(conn, path, file_hash)
+    photo_id = db.upsert_photo(conn, path, file_hash, file_size, modified_at)
     if photo_id is None:
         return
 
@@ -162,12 +171,40 @@ async def _process_path(
 
 
 async def _scan_directory() -> int:
-    """Scan PHOTOS_DIR and enqueue unindexed files. Returns count enqueued."""
+    """Scan PHOTOS_DIR and enqueue new or changed files. Returns count enqueued."""
+    global _last_scan_at, _last_scan_enqueued
+
     count = 0
+    conn = db.get_connection()
+    try:
+        cached = db.get_cached_file_stats(conn)
+    finally:
+        conn.close()
+
     for root, _dirs, files in os.walk(str(PHOTOS_DIR)):
         for fname in files:
-            if _enqueue_path_nowait(os.path.join(root, fname)):
+            path = os.path.join(root, fname)
+            if Path(path).suffix.lower() not in SUPPORTED_EXT:
+                continue
+
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+
+            cached_entry = cached.get(path)
+            if cached_entry:
+                cached_size, cached_mtime, cached_status = cached_entry
+                unchanged = cached_size == stat.st_size and cached_mtime == int(stat.st_mtime)
+                if unchanged and cached_status == "indexed":
+                    continue
+
+            if _enqueue_path_nowait(path):
                 count += 1
+
+    _last_scan_at = time.time()
+    _last_scan_enqueued = count
+    logger.info("Scanned photos: enqueued %d new or changed file(s)", count)
     return count
 
 
@@ -263,5 +300,8 @@ def get_status() -> dict:
         "current_file": active[0]["file"] if active else None,
         "current_elapsed": active[0]["elapsed"] if active else None,
         "last_completed_at": int(_last_completed_at) if _last_completed_at else None,
+        "scan_interval": SCAN_INTERVAL,
+        "last_scan_at": int(_last_scan_at) if _last_scan_at else None,
+        "last_scan_enqueued": _last_scan_enqueued,
         "worker_alive": bool(active) or (heartbeat_age is not None and heartbeat_age < 300),
     }

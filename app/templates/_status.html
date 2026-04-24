@@ -20,4 +20,6 @@
 {% else %}
   {{ indexed }}개 사진 인덱싱 완료
   {%- if errors > 0 %} · {{ errors }}개 오류{% endif %}
+  · {{ scan_interval // 60 }}분마다 새 파일 확인
+  {%- if last_scan_at %} · 최근 스캔 신규/변경 {{ last_scan_enqueued }}개{% endif %}
 {% endif %}

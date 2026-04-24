@@ -39,12 +39,32 @@ def test_upsert_and_requeue(initialized_db):
     assert photo_id is not None
 
     # Same hash → None (already pending, skip)
-    result = db.upsert_photo(conn, "/fake/photo1.jpg", "abc123")
+    result = db.upsert_photo(conn, "/fake/photo1.jpg", "abc123", 100, 123)
     assert result == photo_id
 
     # Different hash → re-queue
-    photo_id2 = db.upsert_photo(conn, "/fake/photo1.jpg", "newhash")
+    photo_id2 = db.upsert_photo(conn, "/fake/photo1.jpg", "newhash", 100, 124)
     assert photo_id2 == photo_id  # same row, re-queued
+
+
+def test_cached_file_stats(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/cached.jpg", "hash", 12, 34)
+    assert photo_id is not None
+    cached = db.get_cached_file_stats(conn)
+    assert cached["/fake/cached.jpg"] == (12, 34, "pending")
+
+
+def test_upsert_backfills_file_stat_cache_for_indexed_rows(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/indexed.jpg", "samehash")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+
+    result = db.upsert_photo(conn, "/fake/indexed.jpg", "samehash", 99, 100)
+    assert result is None
+
+    cached = db.get_cached_file_stats(conn)
+    assert cached["/fake/indexed.jpg"] == (99, 100, "indexed")
 
 
 def test_stats_reflects_status(initialized_db):

@@ -16,6 +16,8 @@ services:
       - PHOTOMEM_INDEX_WORKERS=4
       # Per-encoder PyTorch CPU threads. Total CPU use is roughly workers * threads.
       - PHOTOMEM_TORCH_THREADS=2
+      # Poll the mounted photo folder every 5 minutes for new or changed files.
+      - PHOTOMEM_SCAN_INTERVAL=300
       # Uncomment to expose on LAN (you are responsible for LAN security)
       # - PHOTOMEM_HOST=0.0.0.0
     restart: unless-stopped

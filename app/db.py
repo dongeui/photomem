@@ -37,6 +37,8 @@ def init_db() -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path   TEXT UNIQUE NOT NULL,
             file_hash   TEXT,
+            file_size   INTEGER,
+            modified_at INTEGER,
             created_at  INTEGER,
             latitude    REAL,
             longitude   REAL,
@@ -54,8 +56,22 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_photos_created_at ON photos(created_at);
         CREATE INDEX IF NOT EXISTS idx_photos_city       ON photos(city);
     """)
+    _ensure_column(conn, "photos", "file_size", "INTEGER")
+    _ensure_column(conn, "photos", "modified_at", "INTEGER")
     conn.commit()
     conn.close()
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    cur = conn.execute(f"PRAGMA table_info({table_name})")
+    existing = {row["name"] for row in cur.fetchall()}
+    if column_name not in existing:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 def requeue_pending(conn: sqlite3.Connection) -> int:
@@ -69,22 +85,48 @@ def get_pending_paths(conn: sqlite3.Connection) -> list[str]:
     return [row[0] for row in cur.fetchall()]
 
 
-def upsert_photo(conn: sqlite3.Connection, file_path: str, file_hash: str) -> int | None:
+def get_cached_file_stats(conn: sqlite3.Connection) -> dict[str, tuple[int | None, int | None, str]]:
+    cur = conn.execute("SELECT file_path, file_size, modified_at, status FROM photos")
+    return {
+        row["file_path"]: (row["file_size"], row["modified_at"], row["status"])
+        for row in cur.fetchall()
+    }
+
+
+def upsert_photo(
+    conn: sqlite3.Connection,
+    file_path: str,
+    file_hash: str,
+    file_size: int | None = None,
+    modified_at: int | None = None,
+) -> int | None:
     """Insert or re-queue photo if hash changed. Returns row id, or None if already indexed."""
-    cur = conn.execute("SELECT id, file_hash, status FROM photos WHERE file_path=?", (file_path,))
+    cur = conn.execute(
+        "SELECT id, file_hash, file_size, modified_at, status FROM photos WHERE file_path=?",
+        (file_path,),
+    )
     row = cur.fetchone()
     if row:
         if row["file_hash"] == file_hash and row["status"] == "indexed":
+            if row["file_size"] != file_size or row["modified_at"] != modified_at:
+                conn.execute(
+                    "UPDATE photos SET file_size=?, modified_at=? WHERE id=?",
+                    (file_size, modified_at, row["id"]),
+                )
+                conn.commit()
             return None  # already up to date
         conn.execute(
-            "UPDATE photos SET file_hash=?, status='pending', error_msg=NULL WHERE id=?",
-            (file_hash, row["id"]),
+            """UPDATE photos
+               SET file_hash=?, file_size=?, modified_at=?, status='pending', error_msg=NULL
+               WHERE id=?""",
+            (file_hash, file_size, modified_at, row["id"]),
         )
         conn.commit()
         return row["id"]
     cur = conn.execute(
-        "INSERT INTO photos (file_path, file_hash, status) VALUES (?, ?, 'pending')",
-        (file_path, file_hash),
+        """INSERT INTO photos (file_path, file_hash, file_size, modified_at, status)
+           VALUES (?, ?, ?, ?, 'pending')""",
+        (file_path, file_hash, file_size, modified_at),
     )
     conn.commit()
     return cur.lastrowid
