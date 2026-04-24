@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -16,8 +16,10 @@ logger = logging.getLogger("photomem")
 
 PHOTOS_DIR = Path(os.environ.get("PHOTOMEM_PHOTOS", "/data/photos"))
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="photomem")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Custom Jinja2 filter: unix timestamp → "YYYY-MM-DD"
@@ -29,6 +31,17 @@ def _strftime(ts: int) -> str:
         return ""
 
 templates.env.filters["strftime"] = _strftime
+
+
+async def _load_models_and_start_indexer() -> None:
+    try:
+        await asyncio.to_thread(models.ensure_models)
+    except Exception:
+        logger.exception("Failed to load CLIP model")
+        return
+
+    asyncio.create_task(indexer.run_indexer())
+    logger.info("photomem indexer started. Photos: %s", PHOTOS_DIR)
 
 
 @app.on_event("startup")
@@ -48,9 +61,7 @@ async def startup() -> None:
         sys.exit(1)
 
     db.init_db()
-    models.ensure_models()  # download ONNX models on first run
-    models.load_text_encoder()  # load text encoder in main process
-    asyncio.create_task(indexer.run_indexer())
+    asyncio.create_task(_load_models_and_start_indexer())
     logger.info("photomem started. Photos: %s", PHOTOS_DIR)
 
 
@@ -59,6 +70,11 @@ async def startup() -> None:
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
 
 
 # ── HTMX fragments ────────────────────────────────────────────────────────────
@@ -101,7 +117,7 @@ async def search_photos(
 
 @app.get("/status", response_class=HTMLResponse)
 async def status_fragment(request: Request):
-    stats = indexer.get_status()
+    stats = {**models.status(), **indexer.get_status()}
     return templates.TemplateResponse("_status.html", {"request": request, **stats})
 
 
@@ -126,7 +142,6 @@ async def thumbnail(photo_id: int):
 
     # Generate a 1x1 grey placeholder with Pillow
     import io
-    from fastapi.responses import Response
     from PIL import Image as PilImage
     buf = io.BytesIO()
     PilImage.new("RGB", (1, 1), color=(40, 40, 40)).save(buf, "JPEG")

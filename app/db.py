@@ -73,8 +73,8 @@ def upsert_photo(conn: sqlite3.Connection, file_path: str, file_hash: str) -> in
     cur = conn.execute("SELECT id, file_hash, status FROM photos WHERE file_path=?", (file_path,))
     row = cur.fetchone()
     if row:
-        if row["file_hash"] == file_hash and row["status"] in {"indexed", "pending"}:
-            return None  # already up to date or already queued
+        if row["file_hash"] == file_hash and row["status"] == "indexed":
+            return None  # already up to date
         conn.execute(
             "UPDATE photos SET file_hash=?, status='pending', error_msg=NULL WHERE id=?",
             (file_hash, row["id"]),

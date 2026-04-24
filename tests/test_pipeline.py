@@ -40,7 +40,7 @@ def test_upsert_and_requeue(initialized_db):
 
     # Same hash → None (already pending, skip)
     result = db.upsert_photo(conn, "/fake/photo1.jpg", "abc123")
-    assert result is None
+    assert result == photo_id
 
     # Different hash → re-queue
     photo_id2 = db.upsert_photo(conn, "/fake/photo1.jpg", "newhash")

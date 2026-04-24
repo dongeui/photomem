@@ -1,5 +1,15 @@
-{% if not running %}
+{% if model_error %}
+  모델 로딩 실패: {{ model_error }}
+{% elif model_loading or not model_ready %}
+  CLIP 모델 로딩 중... 첫 실행이면 다운로드에 시간이 걸릴 수 있습니다.
+{% elif not running %}
   인덱서 시작 중...
+{% elif current_file %}
+  처리 중: {{ current_file }}
+  {%- if current_elapsed is not none %} · {{ current_elapsed }}초 경과{% endif %}
+  · 완료 {{ indexed }}/{{ total }}
+  · 대기 {{ pending }}개
+  · 큐 {{ queue_size }}개
 {% elif pending > 0 %}
   인덱싱 중: {{ indexed }}/{{ total }} 완료
   {%- if errors > 0 %} · {{ errors }}개 오류{% endif %}
