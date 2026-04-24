@@ -121,6 +121,23 @@ async def status_fragment(request: Request):
     return templates.TemplateResponse("_status.html", {"request": request, **stats})
 
 
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery_fragment(request: Request, limit: int = Query(120, ge=1, le=240)):
+    conn = db.get_connection()
+    try:
+        photos = db.list_photos(conn, limit=limit)
+    finally:
+        conn.close()
+
+    return templates.TemplateResponse(
+        "_gallery.html",
+        {
+            "request": request,
+            "photos": photos,
+        },
+    )
+
+
 # ── thumbnails ────────────────────────────────────────────────────────────────
 
 @app.get("/thumb/{photo_id}")

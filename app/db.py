@@ -138,6 +138,18 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
+def list_photos(conn: sqlite3.Connection, limit: int = 120, offset: int = 0) -> list[dict]:
+    cur = conn.execute(
+        """SELECT id, file_path, created_at, city, country, status, error_msg
+           FROM photos
+           WHERE status='indexed'
+           ORDER BY COALESCE(created_at, indexed_at, 0) DESC, id DESC
+           LIMIT ? OFFSET ?""",
+        (limit, offset),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
 def search_by_embedding(
     conn: sqlite3.Connection,
     query_embedding: bytes,

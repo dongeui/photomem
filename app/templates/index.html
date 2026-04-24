@@ -121,9 +121,9 @@
     hx-swap="innerHTML"
   ></div>
 
-  <div id="results">
+  <div id="results" hx-get="/gallery" hx-trigger="load" hx-swap="innerHTML">
     <p class="htmx-indicator" id="search-indicator">검색 중...</p>
-    <p style="color:#444; font-size:0.9rem;">검색어를 입력하세요.</p>
+    <p style="color:#444; font-size:0.9rem;">사진을 불러오는 중...</p>
   </div>
 </body>
 </html>

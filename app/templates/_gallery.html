@@ -1,0 +1,10 @@
+{% if not photos %}
+  <p style="color:#555; font-size:0.9rem; padding-top:1rem;">
+    아직 인덱싱된 사진이 없습니다.
+  </p>
+{% else %}
+  <p style="color:#666; font-size:0.78rem; margin-bottom:0.75rem;">
+    최근 인덱싱된 사진 {{ photos|length }}개
+  </p>
+  {% include "_photo_cards.html" %}
+{% endif %}

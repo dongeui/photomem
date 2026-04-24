@@ -11,61 +11,9 @@
   </p>
 
 {% else %}
-  <style>
-    .photo-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 4px;
-    }
-    .photo-item {
-      position: relative;
-      aspect-ratio: 1;
-      overflow: hidden;
-      border-radius: 4px;
-      background: #1a1a1a;
-      cursor: pointer;
-    }
-    .photo-item img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      transition: opacity 0.2s;
-    }
-    .photo-item:hover img { opacity: 0.85; }
-    .photo-meta {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      background: linear-gradient(transparent, rgba(0,0,0,0.7));
-      padding: 1rem 0.4rem 0.4rem;
-      font-size: 0.68rem;
-      color: #ccc;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
-    .photo-item:hover .photo-meta { opacity: 1; }
-  </style>
-
   <p style="color:#666; font-size:0.78rem; margin-bottom:0.75rem;">
     {{ results|length }}개 결과 - "{{ query }}"
   </p>
-
-  <div class="photo-grid">
-    {% for photo in results %}
-    <div class="photo-item" title="{{ photo.file_path }}">
-      <img
-        src="/thumb/{{ photo.id }}"
-        alt=""
-        loading="lazy"
-        decoding="async"
-      >
-      <div class="photo-meta">
-        {% if photo.city %}{{ photo.city }}{% if photo.country %}, {{ photo.country }}{% endif %}<br>{% endif %}
-        {% if photo.created_at %}{{ photo.created_at | int | strftime }}{% endif %}
-      </div>
-    </div>
-    {% endfor %}
-  </div>
+  {% set photos = results %}
+  {% include "_photo_cards.html" %}
 {% endif %}

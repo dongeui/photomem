@@ -1,0 +1,69 @@
+<style>
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 12px;
+  }
+
+  .photo-card {
+    overflow: hidden;
+    border: 1px solid #242424;
+    border-radius: 8px;
+    background: #171717;
+  }
+
+  .photo-card img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    display: block;
+    background: #222;
+  }
+
+  .photo-card-body {
+    padding: 0.65rem 0.7rem 0.75rem;
+  }
+
+  .photo-date {
+    color: #ddd;
+    font-size: 0.78rem;
+    line-height: 1.2;
+    margin-bottom: 0.3rem;
+  }
+
+  .photo-path {
+    color: #777;
+    font-size: 0.7rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .photo-place {
+    color: #999;
+    font-size: 0.72rem;
+    line-height: 1.25;
+    margin-bottom: 0.25rem;
+  }
+</style>
+
+<div class="photo-grid">
+  {% for photo in photos %}
+  <article class="photo-card" title="{{ photo.file_path }}">
+    <img
+      src="/thumb/{{ photo.id }}"
+      alt=""
+      loading="lazy"
+      decoding="async"
+    >
+    <div class="photo-card-body">
+      <div class="photo-date">
+        {% if photo.created_at %}{{ photo.created_at | int | strftime }}{% else %}날짜 없음{% endif %}
+      </div>
+      {% if photo.city %}
+      <div class="photo-place">{{ photo.city }}{% if photo.country %}, {{ photo.country }}{% endif %}</div>
+      {% endif %}
+      <div class="photo-path">{{ photo.file_path }}</div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
