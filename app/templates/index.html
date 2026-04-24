@@ -23,7 +23,7 @@
     header h1 {
       font-size: 1.1rem;
       font-weight: 600;
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
       color: #fff;
       margin-bottom: 1rem;
     }
@@ -55,7 +55,7 @@
       flex-wrap: wrap;
     }
 
-    .filters input, .filters select {
+    .filters input {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
       color: #e8e8e8;
@@ -101,15 +101,15 @@
           id="search-input"
           name="q"
           type="search"
-          placeholder="사진 검색 — 예: 홍콩 여행, sunset beach, 家族旅行"
+          placeholder="사진 검색 - 예: 홍콩 여행, sunset beach, 가족 여행"
           autocomplete="off"
           autofocus
         >
       </div>
       <div class="filters">
-        <input name="city"      type="text"  placeholder="도시 (city)">
-        <input name="date_from" type="date"  title="시작일">
-        <input name="date_to"   type="date"  title="종료일">
+        <input name="city" type="text" placeholder="도시 (city)">
+        <input name="date_from" type="date" title="시작일">
+        <input name="date_to" type="date" title="종료일">
       </div>
     </form>
   </header>

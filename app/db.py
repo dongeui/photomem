@@ -5,7 +5,11 @@ from pathlib import Path
 
 import sqlite_vec
 
-DB_PATH = os.environ.get("PHOTOMEM_DB", "/app/cache/photomem.db")
+DEFAULT_DB_PATH = "/app/cache/photomem.db"
+
+
+def _db_path() -> str:
+    return os.environ.get("PHOTOMEM_DB", DEFAULT_DB_PATH)
 
 
 def _load_vec(conn: sqlite3.Connection) -> None:
@@ -15,14 +19,14 @@ def _load_vec(conn: sqlite3.Connection) -> None:
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(_db_path(), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     _load_vec(conn)
     return conn
 
 
 def init_db() -> None:
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    Path(_db_path()).parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection()
     conn.executescript("""
         PRAGMA journal_mode=WAL;
@@ -69,8 +73,8 @@ def upsert_photo(conn: sqlite3.Connection, file_path: str, file_hash: str) -> in
     cur = conn.execute("SELECT id, file_hash, status FROM photos WHERE file_path=?", (file_path,))
     row = cur.fetchone()
     if row:
-        if row["status"] == "indexed" and row["file_hash"] == file_hash:
-            return None  # already up to date
+        if row["file_hash"] == file_hash and row["status"] in {"indexed", "pending"}:
+            return None  # already up to date or already queued
         conn.execute(
             "UPDATE photos SET file_hash=?, status='pending', error_msg=NULL WHERE id=?",
             (file_hash, row["id"]),

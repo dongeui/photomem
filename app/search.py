@@ -19,8 +19,11 @@ def search(
     Encode query text with CLIP text encoder, run KNN, return photo dicts.
     Caller is responsible for opening/closing the connection.
     """
+    if not query.strip():
+        return []
+
     try:
-        query_bytes = models.encode_text(query)
+        query_bytes = models.encode_text(query.strip())
     except Exception as exc:
         logger.error("Text encoding failed: %s", exc)
         return []

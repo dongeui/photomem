@@ -40,8 +40,7 @@ def test_upsert_and_requeue(initialized_db):
 
     # Same hash → None (already pending, skip)
     result = db.upsert_photo(conn, "/fake/photo1.jpg", "abc123")
-    # status is still pending, hash unchanged → None
-    # (already queued, no need to re-add)
+    assert result is None
 
     # Different hash → re-queue
     photo_id2 = db.upsert_photo(conn, "/fake/photo1.jpg", "newhash")
@@ -70,8 +69,8 @@ def test_mark_error(initialized_db):
 def test_thumbnail_path_bucketing():
     # Ensure thumbnails spread across subdirs
     p1 = thumbnails.thumb_path(1)
-    p256 = thumbnails.thumb_path(257)
-    assert p1.parent != p256.parent
+    p2 = thumbnails.thumb_path(2)
+    assert p1.parent != p2.parent
 
 
 def test_thumbnail_generate(tmp_path):

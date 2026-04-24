@@ -129,7 +129,7 @@ def _encode_photo(path: str) -> bytes | None:
 
 # ── indexing loop ─────────────────────────────────────────────────────────────
 
-async def _process_path(conn, loop: asyncio.AbstractEventLoop, path: str) -> None:
+async def _process_path(conn, path: str) -> None:
     global _last_heartbeat
     if not os.path.isfile(path):
         return
@@ -182,6 +182,7 @@ async def run_indexer() -> None:
     _running = True
     _last_heartbeat = time.time()
 
+    loop = asyncio.get_running_loop()
     conn = db.get_connection()
 
     # Re-queue pending rows from before any container restart
@@ -215,7 +216,7 @@ async def run_indexer() -> None:
             except asyncio.TimeoutError:
                 continue
             _last_heartbeat = time.time()  # alive as long as queue is draining
-            await _process_path(conn, loop, path)
+            await _process_path(conn, path)
             _queue.task_done()
     finally:
         observer.stop()

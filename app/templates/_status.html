@@ -5,7 +5,7 @@
   {%- if errors > 0 %} · {{ errors }}개 오류{% endif %}
   · 대기 {{ pending }}개
   · 큐 {{ queue_size }}개
-  {% if not worker_alive %}<span style="color:#e55;"> ⚠ 워커 응답 없음</span>{% endif %}
+  {% if not worker_alive %}<span style="color:#e55;">워커 응답 없음</span>{% endif %}
 {% else %}
   {{ indexed }}개 사진 인덱싱 완료
   {%- if errors > 0 %} · {{ errors }}개 오류{% endif %}
