@@ -6,6 +6,7 @@ on NAS-class machines.
 """
 from __future__ import annotations
 
+import os
 import struct
 
 import numpy as np
@@ -15,6 +16,20 @@ _preprocess = None
 _tokenizer = None
 _loading = False
 _load_error: str | None = None
+
+
+def _configure_torch_threads() -> None:
+    import torch
+
+    configured = os.environ.get("PHOTOMEM_TORCH_THREADS")
+    index_workers = max(1, int(os.environ.get("PHOTOMEM_INDEX_WORKERS", "1")))
+    cpu_count = os.cpu_count() or 1
+    thread_count = int(configured) if configured else max(1, cpu_count // index_workers)
+    torch.set_num_threads(thread_count)
+    try:
+        torch.set_num_interop_threads(max(1, min(2, thread_count)))
+    except RuntimeError:
+        pass
 
 
 def is_ready() -> bool:
@@ -39,6 +54,7 @@ def ensure_models() -> None:
     _load_error = None
     try:
         import open_clip
+        _configure_torch_threads()
 
         print("[photomem] Loading CLIP model (downloads ~350MB on first run) ...", flush=True)
         _model, _, _preprocess = open_clip.create_model_and_transforms(
@@ -87,7 +103,7 @@ def encode_image(image_path: str) -> bytes:
     tensor = _preprocess(img).unsqueeze(0)
     with torch.no_grad():
         features = _model.encode_image(tensor)
-    return embedding_to_bytes(features.numpy())
+    return embedding_to_bytes(features.detach().cpu().numpy())
 
 
 def encode_text(query: str) -> bytes:
@@ -99,4 +115,4 @@ def encode_text(query: str) -> bytes:
     tokens = _tokenizer([query])
     with torch.no_grad():
         features = _model.encode_text(tokens)
-    return embedding_to_bytes(features.numpy())
+    return embedding_to_bytes(features.detach().cpu().numpy())

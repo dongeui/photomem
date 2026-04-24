@@ -19,8 +19,9 @@ def _load_vec(conn: sqlite3.Connection) -> None:
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
+    conn = sqlite3.connect(_db_path(), check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
     _load_vec(conn)
     return conn
 
@@ -106,10 +107,8 @@ def update_photo_indexed(
            WHERE id=?""",
         (created_at, lat, lon, city, country, int(time.time()), photo_id),
     )
-    conn.execute(
-        "INSERT OR REPLACE INTO vec_photos(rowid, embedding) VALUES (?, ?)",
-        (photo_id, embedding),
-    )
+    conn.execute("DELETE FROM vec_photos WHERE rowid=?", (photo_id,))
+    conn.execute("INSERT INTO vec_photos(rowid, embedding) VALUES (?, ?)", (photo_id, embedding))
     conn.commit()
 
 

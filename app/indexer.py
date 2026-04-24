@@ -9,6 +9,7 @@ import hashlib
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import piexif
@@ -21,6 +22,7 @@ logger = logging.getLogger("photomem.indexer")
 
 PHOTOS_DIR = Path(os.environ.get("PHOTOMEM_PHOTOS", "/data/photos"))
 SCAN_INTERVAL = int(os.environ.get("PHOTOMEM_SCAN_INTERVAL", "300"))  # seconds
+INDEX_WORKERS = max(1, int(os.environ.get("PHOTOMEM_INDEX_WORKERS", "1")))
 
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".tif"}
 
@@ -29,8 +31,7 @@ _queue: asyncio.Queue[str] = asyncio.Queue()
 _queued_paths: set[str] = set()
 _running = False
 _last_heartbeat = 0.0
-_current_path: str | None = None
-_current_started_at: float | None = None
+_active_paths: dict[int, tuple[str, float]] = {}
 _last_completed_at: float | None = None
 
 
@@ -117,8 +118,13 @@ class _PhotoHandler(FileSystemEventHandler):
             self._enqueue(event.dest_path)
 
 
-async def _process_path(conn, path: str) -> None:
-    global _current_path, _current_started_at, _last_completed_at, _last_heartbeat
+async def _process_path(
+    conn,
+    executor: ThreadPoolExecutor,
+    worker_id: int,
+    path: str,
+) -> None:
+    global _last_completed_at, _last_heartbeat
 
     if not os.path.isfile(path):
         return
@@ -139,24 +145,23 @@ async def _process_path(conn, path: str) -> None:
     if lat is not None and lon is not None:
         city, country = geocoder.reverse_geocode(lat, lon)
 
-    _current_path = path
-    _current_started_at = time.time()
+    _active_paths[worker_id] = (path, time.time())
     try:
-        embedding = await asyncio.to_thread(models.encode_image, path)
+        loop = asyncio.get_running_loop()
+        embedding = await loop.run_in_executor(executor, models.encode_image, path)
     except Exception as exc:
         db.mark_photo_error(conn, photo_id, str(exc))
         logger.warning("CLIP failed for %s: %s", path, exc)
         return
     finally:
-        _current_path = None
-        _current_started_at = None
+        _active_paths.pop(worker_id, None)
 
     db.update_photo_indexed(conn, photo_id, created_at, lat, lon, city, country, embedding)
     _last_completed_at = time.time()
     _last_heartbeat = _last_completed_at
 
 
-async def _scan_directory(conn) -> int:
+async def _scan_directory() -> int:
     """Scan PHOTOS_DIR and enqueue unindexed files. Returns count enqueued."""
     count = 0
     for root, _dirs, files in os.walk(str(PHOTOS_DIR)):
@@ -172,42 +177,64 @@ async def run_indexer() -> None:
     _last_heartbeat = time.time()
 
     loop = asyncio.get_running_loop()
-    conn = db.get_connection()
-
-    pending_count = db.requeue_pending(conn)
-    for path in db.get_pending_paths(conn):
-        _enqueue_path_nowait(path)
-    if pending_count:
-        logger.info("Re-queued %d pending photos from previous run", pending_count)
+    setup_conn = db.get_connection()
+    try:
+        pending_count = db.requeue_pending(setup_conn)
+        for path in db.get_pending_paths(setup_conn):
+            _enqueue_path_nowait(path)
+        if pending_count:
+            logger.info("Re-queued %d pending photos from previous run", pending_count)
+    finally:
+        setup_conn.close()
 
     observer = Observer()
     observer.schedule(_PhotoHandler(loop), str(PHOTOS_DIR), recursive=True)
     observer.start()
 
-    await _scan_directory(conn)
+    executor = ThreadPoolExecutor(max_workers=INDEX_WORKERS, thread_name_prefix="clip")
+
+    await _scan_directory()
 
     async def _periodic_scan():
         while _running:
             await asyncio.sleep(SCAN_INTERVAL)
-            await _scan_directory(conn)
+            await _scan_directory()
 
-    asyncio.create_task(_periodic_scan())
+    periodic_task = asyncio.create_task(_periodic_scan())
+
+    async def _worker(worker_id: int):
+        global _last_heartbeat
+        conn = db.get_connection()
+        try:
+            while _running:
+                try:
+                    path = await asyncio.wait_for(_queue.get(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    continue
+
+                _queued_paths.discard(path)
+                _last_heartbeat = time.time()
+                try:
+                    await _process_path(conn, executor, worker_id, path)
+                except Exception:
+                    logger.exception("Unexpected indexing failure for %s", path)
+                finally:
+                    _queue.task_done()
+        finally:
+            conn.close()
+
+    worker_tasks = [asyncio.create_task(_worker(i)) for i in range(INDEX_WORKERS)]
+    logger.info("Started %d index worker(s)", INDEX_WORKERS)
 
     try:
-        while _running:
-            try:
-                path = await asyncio.wait_for(_queue.get(), timeout=5.0)
-            except asyncio.TimeoutError:
-                continue
-
-            _queued_paths.discard(path)
-            _last_heartbeat = time.time()
-            await _process_path(conn, path)
-            _queue.task_done()
+        await asyncio.gather(*worker_tasks)
     finally:
+        periodic_task.cancel()
+        for task in worker_tasks:
+            task.cancel()
         observer.stop()
         observer.join()
-        conn.close()
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def get_status() -> dict:
@@ -217,14 +244,24 @@ def get_status() -> dict:
 
     now = time.time()
     heartbeat_age = now - _last_heartbeat if _last_heartbeat else None
-    current_elapsed = now - _current_started_at if _current_started_at else None
+    active = [
+        {
+            "worker_id": worker_id,
+            "file": Path(path).name,
+            "elapsed": int(now - started_at),
+        }
+        for worker_id, (path, started_at) in sorted(_active_paths.items())
+    ]
 
     return {
         **stats,
         "running": _running,
+        "index_workers": INDEX_WORKERS,
         "queue_size": _queue.qsize(),
-        "current_file": Path(_current_path).name if _current_path else None,
-        "current_elapsed": int(current_elapsed) if current_elapsed is not None else None,
+        "active_workers": len(active),
+        "active_files": active,
+        "current_file": active[0]["file"] if active else None,
+        "current_elapsed": active[0]["elapsed"] if active else None,
         "last_completed_at": int(_last_completed_at) if _last_completed_at else None,
-        "worker_alive": bool(_current_path) or (heartbeat_age is not None and heartbeat_age < 300),
+        "worker_alive": bool(active) or (heartbeat_age is not None and heartbeat_age < 300),
     }
