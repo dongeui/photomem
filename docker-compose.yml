@@ -1,0 +1,23 @@
+services:
+  photomem:
+    build: .
+    image: photomem:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Required: mount your photo library (read-only)
+      # Windows example: C:\Users\you\Pictures:/data/photos:ro
+      # macOS/Linux example: /Users/you/Pictures:/data/photos:ro
+      - ./photos:/data/photos:ro
+      # Persist DB, thumbnails, and ONNX models between restarts
+      - photomem_cache:/app/cache
+    environment:
+      # Number of CLIP worker processes. Keep at 1 for NAS (<4GB RAM).
+      # Set to 2 on machines with >4GB free RAM for faster indexing.
+      - PHOTOMEM_MAX_WORKERS=1
+      # Uncomment to expose on LAN (you are responsible for LAN security)
+      # - PHOTOMEM_HOST=0.0.0.0
+    restart: unless-stopped
+
+volumes:
+  photomem_cache:
