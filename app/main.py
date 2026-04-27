@@ -152,12 +152,13 @@ async def search_photos(
     results = []
     error = None
     search_mode = mode if mode in {"hybrid", "ocr", "semantic"} else "hybrid"
+    search_meta = {"effective_mode": search_mode, "intent_reason": "manual"}
 
     if q.strip():
         try:
             from_ts = _date_to_ts(date_from) if date_from else None
             to_ts = _date_to_ts(date_to, end_of_day=True) if date_to else None
-            results = search.search(
+            results, search_meta = search.search_with_meta(
                 q.strip(),
                 limit=40,
                 city_filter=city or None,
@@ -180,6 +181,8 @@ async def search_photos(
             "query": q,
             "error": error,
             "mode": search_mode,
+            "effective_mode": search_meta["effective_mode"],
+            "intent_reason": search_meta["intent_reason"],
         },
     )
 

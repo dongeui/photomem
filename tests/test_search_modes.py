@@ -30,6 +30,38 @@ def test_search_ocr_mode_skips_clip(monkeypatch):
     assert results[0]["match_reason"] == "ocr"
 
 
+def test_hybrid_auto_routes_to_ocr_on_strong_word_hits(monkeypatch):
+    calls = {"clip": 0}
+
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(
+        search.db,
+        "search_by_ocr",
+        lambda _conn, _query, limit=20: [
+            {"id": 1, "ocr_rank": -5.0, "ocr_text": "\uB3D9\uC758 \uD544\uC694", "ocr_match_kind": "word", "match_reason": "ocr"},
+            {"id": 2, "ocr_rank": -4.0, "ocr_text": "\uC57D\uAD00 \uB3D9\uC758", "ocr_match_kind": "word", "match_reason": "ocr"},
+        ],
+    )
+
+    def fake_clip(*args, **kwargs):
+        calls["clip"] += 1
+        return []
+
+    monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"ignored")
+
+    results, meta = search.search_with_meta("\uB3D9\uC758", mode="hybrid", limit=5)
+
+    assert len(results) == 2
+    assert meta["effective_mode"] == "ocr"
+    assert meta["intent_reason"] == "auto-word-match"
+    assert calls["clip"] == 0
+
+
 def test_search_semantic_mode_skips_ocr(monkeypatch):
     calls = {"ocr": 0, "clip": 0}
 
@@ -69,20 +101,20 @@ def test_search_hybrid_merges_ocr_and_clip(monkeypatch):
         search.db,
         "search_by_ocr",
         lambda _conn, _query, limit=20: [
-            {"id": 1, "ocr_rank": -5.0, "ocr_text": "verified", "match_reason": "ocr", "ocr_match_kind": "word"},
+            {"id": 1, "ocr_rank": -5.0, "ocr_text": "verified domain issue", "match_reason": "ocr", "ocr_match_kind": "word"},
         ],
     )
     monkeypatch.setattr(
         search.db,
         "search_by_embedding",
         lambda _conn, _embedding, limit=20, city_filter=None, date_from=None, date_to=None: [
-            {"id": 1, "distance": 0.2, "ocr_text": "verified"},
+            {"id": 1, "distance": 0.2, "ocr_text": "verified domain issue"},
             {"id": 2, "distance": 0.7},
         ],
     )
     monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
 
-    results = search.search("verified", mode="hybrid", limit=5)
+    results = search.search("verified domain issue", mode="hybrid", limit=5)
 
     assert len(results) == 2
     assert results[0]["id"] == 1

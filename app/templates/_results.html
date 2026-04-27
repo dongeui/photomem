@@ -1,4 +1,5 @@
 {% set mode_label = {"hybrid": "통합", "ocr": "텍스트", "semantic": "의미"}[mode] if mode in ["hybrid", "ocr", "semantic"] else "통합" %}
+{% set effective_mode_label = {"hybrid": "통합", "ocr": "텍스트", "semantic": "의미"}[effective_mode] if effective_mode in ["hybrid", "ocr", "semantic"] else mode_label %}
 
 {% if error %}
   <p style="color:#e55; font-size:0.9rem;">오류: {{ error }}</p>
@@ -64,7 +65,12 @@
 
   <div class="result-meta">
     <span>{{ results|length }}개 결과 - "{{ query | e }}"</span>
-    <span class="result-mode">{{ mode_label }} 검색</span>
+    <span class="result-mode">
+      {{ mode_label }} 검색
+      {% if mode == "hybrid" and effective_mode != "hybrid" %}
+        · 자동 {{ effective_mode_label }}
+      {% endif %}
+    </span>
   </div>
 
   <section class="result-section">
