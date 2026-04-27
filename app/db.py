@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite_vec
 
 DEFAULT_DB_PATH = "/app/cache/photomem.db"
+CURRENT_FACE_DETECTOR = "yunet_2023mar"
 
 
 def _db_path() -> str:
@@ -79,6 +80,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS photo_faces (
             photo_id     INTEGER PRIMARY KEY,
             face_count   INTEGER NOT NULL DEFAULT 0,
+            detector     TEXT NOT NULL DEFAULT 'haar',
             updated_at   INTEGER NOT NULL
         );
 
@@ -106,6 +108,7 @@ def init_db() -> None:
     _ensure_column(conn, "photos", "file_size", "INTEGER")
     _ensure_column(conn, "photos", "modified_at", "INTEGER")
     _ensure_column(conn, "photo_ocr", "engine", "TEXT NOT NULL DEFAULT 'tesseract'")
+    _ensure_column(conn, "photo_faces", "detector", "TEXT NOT NULL DEFAULT 'haar'")
     _ensure_ocr_fts(conn)
     _ensure_search_doc_fts(conn)
     _backfill_missing_search_docs(conn)
@@ -212,8 +215,8 @@ def photo_has_ocr(conn: sqlite3.Connection, photo_id: int) -> bool:
 
 def photo_has_face_data(conn: sqlite3.Connection, photo_id: int) -> bool:
     cur = conn.execute(
-        "SELECT 1 FROM photo_faces WHERE photo_id=?",
-        (photo_id,),
+        "SELECT 1 FROM photo_faces WHERE photo_id=? AND detector=?",
+        (photo_id, CURRENT_FACE_DETECTOR),
     )
     return cur.fetchone() is not None
 
@@ -246,8 +249,10 @@ def get_missing_face_paths(conn: sqlite3.Connection) -> list[str]:
         FROM photos AS p
         LEFT JOIN photo_faces AS f ON f.photo_id = p.id
         WHERE p.status='indexed'
-          AND f.photo_id IS NULL
+          AND (f.photo_id IS NULL OR COALESCE(f.detector, '') != ?)
         """
+        ,
+        (CURRENT_FACE_DETECTOR,),
     )
     return [row[0] for row in cur.fetchall()]
 
@@ -367,13 +372,14 @@ def update_photo_ocr(
 def update_photo_faces(conn: sqlite3.Connection, photo_id: int, face_count: int) -> None:
     now = int(time.time())
     conn.execute(
-        """INSERT INTO photo_faces (photo_id, face_count, updated_at)
-           VALUES (?, ?, ?)
+        """INSERT INTO photo_faces (photo_id, face_count, detector, updated_at)
+           VALUES (?, ?, ?, ?)
            ON CONFLICT(photo_id) DO UPDATE SET
              face_count=excluded.face_count,
+             detector=excluded.detector,
              updated_at=excluded.updated_at
         """,
-        (photo_id, max(0, int(face_count)), now),
+        (photo_id, max(0, int(face_count)), CURRENT_FACE_DETECTOR, now),
     )
     _refresh_search_doc(conn, photo_id)
     conn.commit()

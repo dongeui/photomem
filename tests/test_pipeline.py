@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app import db, thumbnails
+from app import db, faces, thumbnails
 from app.indexer import _file_hash, _parse_exif
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -192,6 +192,19 @@ def test_update_and_load_face_count(initialized_db):
     photos = db.list_photos(conn, limit=10)
     matching = next(photo for photo in photos if photo["id"] == photo_id)
     assert matching["face_count"] == 2
+
+
+def test_yunet_model_is_packaged():
+    assert faces.MODEL_PATH.exists()
+
+
+def test_face_filter_rejects_small_or_low_confidence_detections():
+    detections = [
+        [10, 10, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.95],
+        [20, 20, 80, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.40],
+        [30, 30, 90, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.97],
+    ]
+    assert faces._count_valid_faces(detections, 1000, 1000) == 1
 
 
 def test_get_missing_face_paths(initialized_db):
