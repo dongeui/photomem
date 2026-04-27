@@ -210,6 +210,36 @@ def test_search_hybrid_merges_ocr_and_clip(monkeypatch):
     assert results[1]["id"] == 2
 
 
+def test_hybrid_rrf_prefers_cross_channel_agreement(monkeypatch):
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(
+        search.db,
+        "search_by_ocr",
+        lambda _conn, _query, limit=20: [
+            {"id": 2, "ocr_rank": -4.0, "ocr_text": "dialog screen", "match_reason": "ocr", "ocr_match_kind": "word"},
+        ],
+    )
+    monkeypatch.setattr(
+        search.db,
+        "search_by_embedding",
+        lambda _conn, _embedding, limit=20, city_filter=None, date_from=None, date_to=None: [
+            {"id": 3, "distance": 0.1},
+            {"id": 2, "distance": 0.2},
+        ],
+    )
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
+
+    results = search.search("dialog issue today", mode="hybrid", limit=5)
+
+    assert results[0]["id"] == 2
+    assert results[0]["match_reason"] == "ocr+clip"
+    assert results[0]["rank_score"] == 1.0
+
+
 def test_face_hint_query_boosts_face_results(monkeypatch):
     class DummyConn:
         def close(self):

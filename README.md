@@ -34,3 +34,7 @@ pytest
 ```
 
 Some search tests are skipped unless CLIP model assets are already available.
+
+## Search Quality Roadmap
+
+The current search quality plan is tracked in [docs/search-quality-plan.md](docs/search-quality-plan.md).

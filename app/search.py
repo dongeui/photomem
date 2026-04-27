@@ -6,6 +6,7 @@ import logging
 from app import db, models
 
 logger = logging.getLogger("photomem.search")
+RRF_K = 60.0
 
 FACE_HINTS = {
     "face", "faces", "person", "people", "portrait", "selfie",
@@ -77,43 +78,13 @@ def search_with_meta(
     finally:
         conn.close()
 
-    merged: list[dict] = []
-    seen_ids: set[int] = set()
-    merged_by_id: dict[int, dict] = {}
-
-    if effective_mode in {"hybrid", "ocr"} and ocr_results:
-        best_bm25 = min(r["ocr_rank"] for r in ocr_results)
-        worst_bm25 = max(r["ocr_rank"] for r in ocr_results)
-        bm25_spread = worst_bm25 - best_bm25
-        for result in ocr_results:
-            if bm25_spread < 1e-9:
-                result["rank_score"] = 0.8
-            else:
-                normalized = (worst_bm25 - result["ocr_rank"]) / bm25_spread
-                result["rank_score"] = 0.6 + 0.4 * normalized
-            result["rank_score"] = min(1.0, result["rank_score"] + _ocr_match_boost(result.get("ocr_match_kind")))
-            result["match_reason"] = result.get("match_reason") or "ocr"
-            result["effective_mode"] = effective_mode
-            merged.append(result)
-            seen_ids.add(result["id"])
-            merged_by_id[result["id"]] = result
-
-    for result in clip_results:
-        result["match_reason"] = result.get("match_reason") or "clip"
-        result["effective_mode"] = effective_mode
-        dist = float(result["distance"]) if result.get("distance") is not None else 1.5
-        result["rank_score"] = max(0.0, min(0.65, 1.0 - (dist ** 2) / 2))
-        if result["id"] in seen_ids:
-            existing = merged_by_id[result["id"]]
-            existing["match_reason"] = "ocr+clip"
-            existing["distance"] = result.get("distance")
-            existing["rank_score"] = 1.0
-            if result.get("ocr_text") and not existing.get("ocr_text"):
-                existing["ocr_text"] = result["ocr_text"]
-            continue
-        merged.append(result)
-        merged_by_id[result["id"]] = result
-        seen_ids.add(result["id"])
+    merged = _fuse_ranked_results(
+        cleaned,
+        effective_mode,
+        intent_reason,
+        ocr_results if effective_mode in {"hybrid", "ocr"} else [],
+        clip_results,
+    )
 
     _apply_exact_ocr_boost(cleaned, merged)
     _apply_face_boost(cleaned, merged)
@@ -121,6 +92,127 @@ def search_with_meta(
     _set_ocr_excerpt(cleaned, merged)
     merged.sort(key=lambda item: item.get("rank_score", 0.0), reverse=True)
     return merged[:limit], {"effective_mode": effective_mode, "intent_reason": intent_reason}
+
+
+def _fuse_ranked_results(
+    query: str,
+    effective_mode: str,
+    intent_reason: str,
+    ocr_results: list[dict],
+    clip_results: list[dict],
+) -> list[dict]:
+    weights = _intent_weights(effective_mode, intent_reason)
+    candidates: dict[int, dict] = {}
+    channel_hits: dict[int, set[str]] = {}
+
+    def merge_result(result: dict, channel: str, rank: int) -> None:
+        photo_id = int(result["id"])
+        existing = candidates.setdefault(photo_id, dict(result))
+        if existing is not result:
+            for key, value in result.items():
+                if key not in existing or existing[key] in (None, ""):
+                    existing[key] = value
+        existing["effective_mode"] = effective_mode
+        existing[f"{channel}_rank"] = rank
+        existing[f"rrf_{channel}"] = weights[channel] / (RRF_K + rank)
+        channel_hits.setdefault(photo_id, set()).add(channel)
+
+    for rank, result in enumerate(ocr_results, start=1):
+        result["match_reason"] = result.get("match_reason") or "ocr"
+        merge_result(result, "ocr", rank)
+
+    for rank, result in enumerate(clip_results, start=1):
+        result["match_reason"] = result.get("match_reason") or "clip"
+        merge_result(result, "clip", rank)
+
+    analysis_ranked = _analysis_ranked_candidates(query, effective_mode, list(candidates.values()))
+    for rank, result in enumerate(analysis_ranked, start=1):
+        result["analysis_rank"] = rank
+        result["rrf_analysis"] = weights["analysis"] / (RRF_K + rank)
+
+    fused = []
+    for photo_id, result in candidates.items():
+        hits = channel_hits.get(photo_id, set())
+        result["match_reason"] = _combined_match_reason(hits)
+        raw_score = (
+            float(result.get("rrf_ocr") or 0.0)
+            + float(result.get("rrf_clip") or 0.0)
+            + float(result.get("rrf_analysis") or 0.0)
+        )
+        result["rrf_score"] = raw_score
+        fused.append(result)
+
+    if not fused:
+        return []
+
+    max_score = max(float(item.get("rrf_score") or 0.0) for item in fused) or 1.0
+    for result in fused:
+        result["rank_score"] = max(0.0, min(1.0, float(result.get("rrf_score") or 0.0) / max_score))
+
+    fused.sort(key=lambda item: item.get("rank_score", 0.0), reverse=True)
+    return fused
+
+
+def _intent_weights(effective_mode: str, intent_reason: str) -> dict[str, float]:
+    if effective_mode == "ocr":
+        return {"ocr": 0.74, "clip": 0.08, "analysis": 0.18}
+    if effective_mode == "semantic":
+        return {"ocr": 0.05, "clip": 0.72, "analysis": 0.23}
+    if intent_reason == "auto-mixed":
+        return {"ocr": 0.45, "clip": 0.40, "analysis": 0.15}
+    return {"ocr": 0.42, "clip": 0.43, "analysis": 0.15}
+
+
+def _combined_match_reason(hits: set[str]) -> str:
+    if "ocr" in hits and "clip" in hits:
+        return "ocr+clip"
+    if "ocr" in hits:
+        return "ocr"
+    if "clip" in hits:
+        return "clip"
+    return "analysis"
+
+
+def _analysis_ranked_candidates(query: str, effective_mode: str, results: list[dict]) -> list[dict]:
+    scored = [
+        (score, result)
+        for result in results
+        if (score := _analysis_signal_score(query, effective_mode, result)) > 0
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    for score, result in scored:
+        result["analysis_score"] = score
+    return [result for _score, result in scored]
+
+
+def _analysis_signal_score(query: str, effective_mode: str, result: dict) -> float:
+    lowered = query.casefold()
+    wants_text = effective_mode == "ocr" or any(hint in lowered for hint in TEXT_HINTS)
+    wants_screen = any(hint in lowered for hint in SCREEN_HINTS)
+    wants_faces = effective_mode == "semantic" or any(hint in lowered for hint in FACE_HINTS)
+
+    text_heavy = bool(result.get("is_text_heavy"))
+    document_like = bool(result.get("is_document_like"))
+    screenshot_like = bool(result.get("is_screenshot_like"))
+    face_count = int(result.get("face_count") or 0)
+
+    score = 0.0
+    if wants_text:
+        score += 1.2 if text_heavy else 0.0
+        score += 1.0 if document_like else 0.0
+        score += 0.6 if screenshot_like else 0.0
+        score += 0.4 if result.get("ocr_text") else 0.0
+
+    if wants_screen:
+        score += 1.0 if screenshot_like else 0.0
+        score += 0.5 if document_like else 0.0
+
+    if wants_faces:
+        score += min(3.0, face_count * 1.4)
+        if text_heavy and face_count == 0:
+            score -= 1.0
+
+    return max(0.0, score)
 
 
 def _apply_exact_ocr_boost(query: str, results: list[dict]) -> None:
