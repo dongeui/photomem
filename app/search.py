@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from app import db, models
+from app import db, models, query_translate
 
 logger = logging.getLogger("photomem.search")
 RRF_K = 60.0
@@ -55,22 +55,24 @@ def search_with_meta(
     try:
         ocr_results = []
         clip_results = []
+        shadow_results = []
 
         if normalized_mode in {"hybrid", "ocr"}:
             ocr_results = db.search_by_ocr(conn, cleaned, limit=limit)
 
         effective_mode, intent_reason = _resolve_effective_mode(cleaned, normalized_mode, ocr_results)
 
+        if effective_mode in {"hybrid", "ocr"}:
+            try:
+                shadow_results = db.search_by_shadow_doc(conn, cleaned, limit=limit)
+            except Exception as exc:
+                logger.debug("Shadow document search skipped: %s", exc)
+                shadow_results = []
+
         if effective_mode in {"hybrid", "semantic"}:
             try:
-                query_bytes = models.encode_text(cleaned)
-                clip_results = db.search_by_embedding(
-                    conn,
-                    query_bytes,
-                    limit=limit,
-                    city_filter=city_filter,
-                    date_from=date_from,
-                    date_to=date_to,
+                clip_results = _search_clip_variants(
+                    conn, cleaned, limit, city_filter, date_from, date_to
                 )
             except Exception as exc:
                 logger.error("Text encoding failed: %s", exc)
@@ -84,12 +86,14 @@ def search_with_meta(
         intent_reason,
         ocr_results if effective_mode in {"hybrid", "ocr"} else [],
         clip_results,
+        shadow_results,
     )
 
     _apply_exact_ocr_boost(cleaned, merged)
     _apply_face_boost(cleaned, merged)
     _apply_analysis_boost(cleaned, effective_mode, merged)
     _set_ocr_excerpt(cleaned, merged)
+    _set_match_explanations(cleaned, merged)
     merged.sort(key=lambda item: item.get("rank_score", 0.0), reverse=True)
     return merged[:limit], {"effective_mode": effective_mode, "intent_reason": intent_reason}
 
@@ -100,6 +104,7 @@ def _fuse_ranked_results(
     intent_reason: str,
     ocr_results: list[dict],
     clip_results: list[dict],
+    shadow_results: list[dict],
 ) -> list[dict]:
     weights = _intent_weights(effective_mode, intent_reason)
     candidates: dict[int, dict] = {}
@@ -125,6 +130,10 @@ def _fuse_ranked_results(
         result["match_reason"] = result.get("match_reason") or "clip"
         merge_result(result, "clip", rank)
 
+    for rank, result in enumerate(shadow_results, start=1):
+        result["match_reason"] = result.get("match_reason") or "shadow"
+        merge_result(result, "shadow", rank)
+
     analysis_ranked = _analysis_ranked_candidates(query, effective_mode, list(candidates.values()))
     for rank, result in enumerate(analysis_ranked, start=1):
         result["analysis_rank"] = rank
@@ -137,6 +146,7 @@ def _fuse_ranked_results(
         raw_score = (
             float(result.get("rrf_ocr") or 0.0)
             + float(result.get("rrf_clip") or 0.0)
+            + float(result.get("rrf_shadow") or 0.0)
             + float(result.get("rrf_analysis") or 0.0)
         )
         result["rrf_score"] = raw_score
@@ -153,14 +163,46 @@ def _fuse_ranked_results(
     return fused
 
 
+def _search_clip_variants(
+    conn,
+    query: str,
+    limit: int,
+    city_filter: str | None,
+    date_from: int | None,
+    date_to: int | None,
+) -> list[dict]:
+    merged: dict[int, dict] = {}
+    for variant in query_translate.expand_for_clip(query):
+        query_bytes = models.encode_text(variant)
+        results = db.search_by_embedding(
+            conn,
+            query_bytes,
+            limit=limit,
+            city_filter=city_filter,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        for rank, result in enumerate(results, start=1):
+            photo_id = int(result["id"])
+            current = merged.get(photo_id)
+            if current is None or float(result.get("distance", 99.0)) < float(current.get("distance", 99.0)):
+                result["semantic_query"] = variant
+                result["semantic_variant_rank"] = rank
+                merged[photo_id] = result
+
+    values = list(merged.values())
+    values.sort(key=lambda item: float(item.get("distance", 99.0)))
+    return values[:limit]
+
+
 def _intent_weights(effective_mode: str, intent_reason: str) -> dict[str, float]:
     if effective_mode == "ocr":
-        return {"ocr": 0.74, "clip": 0.08, "analysis": 0.18}
+        return {"ocr": 0.62, "clip": 0.04, "shadow": 0.22, "analysis": 0.12}
     if effective_mode == "semantic":
-        return {"ocr": 0.05, "clip": 0.72, "analysis": 0.23}
+        return {"ocr": 0.03, "clip": 0.74, "shadow": 0.05, "analysis": 0.18}
     if intent_reason == "auto-mixed":
-        return {"ocr": 0.45, "clip": 0.40, "analysis": 0.15}
-    return {"ocr": 0.42, "clip": 0.43, "analysis": 0.15}
+        return {"ocr": 0.36, "clip": 0.34, "shadow": 0.18, "analysis": 0.12}
+    return {"ocr": 0.35, "clip": 0.36, "shadow": 0.17, "analysis": 0.12}
 
 
 def _combined_match_reason(hits: set[str]) -> str:
@@ -170,6 +212,8 @@ def _combined_match_reason(hits: set[str]) -> str:
         return "ocr"
     if "clip" in hits:
         return "clip"
+    if "shadow" in hits:
+        return "shadow"
     return "analysis"
 
 
@@ -240,6 +284,8 @@ def _ocr_match_boost(match_kind: str | None) -> float:
         return 0.12
     if match_kind == "tokens":
         return 0.04
+    if match_kind == "gram":
+        return 0.02
     return 0.0
 
 
@@ -302,6 +348,35 @@ def _set_ocr_excerpt(query: str, results: list[dict]) -> None:
             result["ocr_excerpt"] = normalized[excerpt_start:excerpt_end].strip()
         else:
             result["ocr_excerpt"] = normalized[:120].strip()
+
+
+def _set_match_explanations(query: str, results: list[dict]) -> None:
+    for result in results:
+        if result.get("ocr_exact_match"):
+            result["match_explanation"] = f'OCR: "{query}" exact match'
+            continue
+        if result.get("ocr_match_kind") == "word":
+            result["match_explanation"] = f'OCR: "{query}" word match'
+            continue
+        if result.get("face_match"):
+            result["match_explanation"] = f"Face: {int(result.get('face_count') or 0)} detected"
+            continue
+        if result.get("match_reason") == "ocr+clip":
+            result["match_explanation"] = "OCR and semantic results agree"
+            continue
+        if result.get("semantic_query") and result.get("semantic_query") != query:
+            result["match_explanation"] = f'Semantic: "{result["semantic_query"]}"'
+            continue
+        if result.get("match_reason") == "shadow":
+            result["match_explanation"] = "Tags/OCR shadow document match"
+            continue
+        if result.get("is_document_like"):
+            result["match_explanation"] = "Structure: document-like screen"
+            continue
+        if result.get("is_screenshot_like"):
+            result["match_explanation"] = "Structure: screenshot-like image"
+            continue
+        result["match_explanation"] = "Semantic visual match"
 
 
 def _resolve_effective_mode(query: str, requested_mode: str, ocr_results: list[dict]) -> tuple[str, str]:

@@ -65,6 +65,8 @@ Implementation shape:
 
 This does not require DB re-indexing.
 
+Status: implemented as query-time expansion. The default path uses a small offline lexicon so Docker remains stable; `PHOTOMEM_TRANSLATOR=opus` enables the optional MarianMT path when dependencies/model cache are installed.
+
 ### 3. OCR Engine Benchmark and Abstraction
 
 Do not replace Tesseract blindly. Add an OCR engine abstraction, then benchmark:
@@ -82,6 +84,8 @@ Benchmark target:
 - Mixed Korean/English/code text
 
 Likely next engine to test first: PaddleOCR, because the project is screenshot-heavy and Korean UI-heavy.
+
+Status: implemented as an OCR engine abstraction with Tesseract as the stable default, optional EasyOCR/PaddleOCR adapters, and `scripts/benchmark_ocr.py` for sample-folder comparison.
 
 ### 4. OCR Line/Word Storage
 
@@ -101,6 +105,8 @@ This enables:
 - Highlighting matched text on the original image
 - Better result explanations
 
+Status: implemented for Tesseract word boxes and optional engine line boxes. Stored in `photo_ocr_blocks`.
+
 ### 5. Short Korean Text Index
 
 Add a 2-gram/materialized token table for short Korean UI terms.
@@ -116,6 +122,8 @@ Important terms:
 
 FTS5 is useful, but short Korean UI strings need a dedicated fallback index.
 
+Status: implemented as a materialized 2-gram table, `photo_ocr_grams`.
+
 ### 6. Shadow Document
 
 Create one generated search document per image:
@@ -129,6 +137,8 @@ objects: button form dialog
 
 Index it separately so text search can use OCR, tags, and future captions together.
 
+Status: implemented as `photo_search_docs` FTS5, refreshed when OCR, face, or analysis metadata changes.
+
 ### 7. Result UX Trust
 
 Cards should explain the strongest matching reason:
@@ -140,6 +150,8 @@ Cards should explain the strongest matching reason:
 - `Semantic: CLIP match`
 
 The UI should distinguish strong matches from weak candidates more visually.
+
+Status: partially implemented. Cards now show a match reason line. Strong/weak section styling still needs a fuller UX pass.
 
 ## Near-Term Development Order
 

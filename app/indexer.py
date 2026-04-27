@@ -150,8 +150,9 @@ async def _process_path(
             thumbnails.generate_thumbnail(existing_id, path)
             ocr_text = None
             if not db.photo_has_ocr(conn, existing_id):
-                ocr_text = ocr.extract_text(path)
-                db.update_photo_ocr(conn, existing_id, ocr_text)
+                ocr_result = ocr.extract(path)
+                ocr_text = ocr_result.text
+                db.update_photo_ocr(conn, existing_id, ocr_result.text, ocr_result.blocks, ocr_result.engine)
             if not db.photo_has_face_data(conn, existing_id):
                 db.update_photo_faces(conn, existing_id, faces.detect_faces(path))
             if not db.photo_has_analysis_data(conn, existing_id):
@@ -161,8 +162,9 @@ async def _process_path(
         return
 
     thumbnails.generate_thumbnail(photo_id, path)
-    ocr_text = ocr.extract_text(path)
-    db.update_photo_ocr(conn, photo_id, ocr_text)
+    ocr_result = ocr.extract(path)
+    ocr_text = ocr_result.text
+    db.update_photo_ocr(conn, photo_id, ocr_result.text, ocr_result.blocks, ocr_result.engine)
     db.update_photo_faces(conn, photo_id, faces.detect_faces(path))
     db.update_photo_analysis(conn, photo_id, analysis.extract_analysis(path, ocr_text))
     created_at, lat, lon = _parse_exif(path)

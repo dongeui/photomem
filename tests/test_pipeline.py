@@ -98,6 +98,61 @@ def test_update_and_search_ocr(initialized_db):
     assert "consent" in results[0]["ocr_text"]
 
 
+def test_update_ocr_persists_blocks_and_grams(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/ocr-blocks.jpg", "ocrblocks")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    db.update_photo_ocr(
+        conn,
+        photo_id,
+        "동의 확인",
+        [
+            {
+                "level": "word",
+                "text": "동의",
+                "confidence": 0.96,
+                "left": 10,
+                "top": 20,
+                "width": 30,
+                "height": 12,
+            }
+        ],
+        "tesseract",
+    )
+
+    block = conn.execute("SELECT text, confidence FROM photo_ocr_blocks WHERE photo_id=?", (photo_id,)).fetchone()
+    gram = conn.execute("SELECT gram FROM photo_ocr_grams WHERE photo_id=? AND gram='동의'", (photo_id,)).fetchone()
+
+    assert block["text"] == "동의"
+    assert block["confidence"] == 0.96
+    assert gram["gram"] == "동의"
+
+
+def test_shadow_doc_search_uses_tags(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/shadow-doc.jpg", "shadowdoc")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    db.update_photo_ocr(conn, photo_id, "plain text", [], "tesseract")
+    db.update_photo_faces(conn, photo_id, 1)
+    db.update_photo_analysis(
+        conn,
+        photo_id,
+        {
+            "text_char_count": 20,
+            "text_line_count": 2,
+            "edge_density": 0.02,
+            "brightness": 0.5,
+            "is_text_heavy": 1,
+            "is_document_like": 1,
+            "is_screenshot_like": 1,
+        },
+    )
+
+    results = db.search_by_shadow_doc(conn, "document", limit=5)
+
+    assert any(result["id"] == photo_id for result in results)
+
+
 def test_list_photos_includes_ocr_text(initialized_db):
     conn = initialized_db
     photo_id = db.upsert_photo(conn, "/fake/list-ocr.jpg", "listocr")

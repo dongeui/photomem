@@ -1,4 +1,12 @@
 from app import search
+from app import query_translate
+
+
+def test_korean_query_expands_for_clip():
+    variants = query_translate.expand_for_clip("\uc790\uc804\uac70")
+
+    assert variants[0] == "\uc790\uc804\uac70"
+    assert any("bicycle" in variant for variant in variants)
 
 
 def test_search_ocr_mode_skips_clip(monkeypatch):
@@ -89,7 +97,7 @@ def test_hybrid_auto_routes_face_queries_to_semantic(monkeypatch):
 
     assert meta["effective_mode"] == "semantic"
     assert meta["intent_reason"] == "auto-face"
-    assert calls["clip"] == 1
+    assert calls["clip"] == 2
     assert results[0]["id"] == 2
     assert results[0]["match_reason"] == "clip"
 
@@ -121,7 +129,7 @@ def test_hybrid_keeps_mixed_queries_in_hybrid(monkeypatch):
 
     assert meta["effective_mode"] == "hybrid"
     assert meta["intent_reason"] == "auto-mixed"
-    assert calls["clip"] == 1
+    assert calls["clip"] == 2
 
 
 def test_hybrid_auto_routes_code_queries_to_ocr(monkeypatch):
@@ -174,7 +182,7 @@ def test_search_semantic_mode_skips_ocr(monkeypatch):
 
     assert len(results) == 1
     assert calls["ocr"] == 0
-    assert calls["clip"] == 1
+    assert calls["clip"] == 2
     assert results[0]["match_reason"] == "clip"
 
 

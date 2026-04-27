@@ -1,15 +1,33 @@
-"""
-OCR helpers built on Tesseract.
-"""
+"""OCR helpers with a small engine abstraction."""
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytesseract
 from PIL import Image, ImageOps
 
 OCR_LANG = os.environ.get("PHOTOMEM_OCR_LANG", "kor+eng")
+OCR_ENGINE = os.environ.get("PHOTOMEM_OCR_ENGINE", "tesseract").casefold()
+
+
+@dataclass
+class OCRBlock:
+    level: str
+    text: str
+    confidence: float
+    left: int
+    top: int
+    width: int
+    height: int
+
+
+@dataclass
+class OCRResult:
+    text: str
+    blocks: list[OCRBlock]
+    engine: str
 
 
 def is_enabled() -> bool:
@@ -17,16 +35,30 @@ def is_enabled() -> bool:
 
 
 def extract_text(image_path: str) -> str:
+    return extract(image_path).text
+
+
+def extract(image_path: str) -> OCRResult:
     if not is_enabled():
-        return ""
+        return OCRResult("", [], OCR_ENGINE)
 
     path = Path(image_path)
     if not path.exists():
-        return ""
+        return OCRResult("", [], OCR_ENGINE)
+
+    if OCR_ENGINE == "easyocr":
+        return _extract_easyocr(path)
+    if OCR_ENGINE == "paddleocr":
+        return _extract_paddleocr(path)
+    return _extract_tesseract(path)
+
+
+def _extract_tesseract(path: Path) -> OCRResult:
+    candidates = []
+    blocks: list[OCRBlock] = []
 
     try:
         with Image.open(path) as image:
-            candidates = []
             for prepared, config in (
                 (_prepare_image(image), "--oem 1 --psm 6"),
                 (_prepare_threshold_image(image), "--oem 1 --psm 11"),
@@ -35,12 +67,107 @@ def extract_text(image_path: str) -> str:
                 normalized = _normalize_text(text)
                 if normalized:
                     candidates.append(normalized)
+            blocks = _extract_tesseract_blocks(_prepare_image(image))
     except Exception:
-        return ""
+        return OCRResult("", [], "tesseract")
 
     if not candidates:
-        return ""
-    return _merge_candidates(candidates)
+        return OCRResult("", blocks, "tesseract")
+    return OCRResult(_merge_candidates(candidates), blocks, "tesseract")
+
+
+def _extract_tesseract_blocks(image: Image.Image) -> list[OCRBlock]:
+    data = pytesseract.image_to_data(image, lang=OCR_LANG, config="--oem 1 --psm 6", output_type=pytesseract.Output.DICT)
+    blocks: list[OCRBlock] = []
+    for idx, raw_text in enumerate(data.get("text", [])):
+        text = str(raw_text).strip()
+        if not text:
+            continue
+        try:
+            confidence = float(data["conf"][idx])
+        except Exception:
+            confidence = -1.0
+        if confidence < 0:
+            continue
+        blocks.append(
+            OCRBlock(
+                level="word",
+                text=text,
+                confidence=confidence / 100.0,
+                left=int(data["left"][idx]),
+                top=int(data["top"][idx]),
+                width=int(data["width"][idx]),
+                height=int(data["height"][idx]),
+            )
+        )
+    return blocks[:1000]
+
+
+def _extract_easyocr(path: Path) -> OCRResult:
+    try:
+        import easyocr
+
+        reader = _easyocr_reader()
+        raw = reader.readtext(str(path), detail=1, paragraph=False)
+    except Exception:
+        return _extract_tesseract(path)
+
+    lines = []
+    blocks: list[OCRBlock] = []
+    for box, text, confidence in raw:
+        normalized = str(text).strip()
+        if not normalized or float(confidence) < 0.5:
+            continue
+        xs = [int(point[0]) for point in box]
+        ys = [int(point[1]) for point in box]
+        left, top = min(xs), min(ys)
+        blocks.append(OCRBlock("line", normalized, float(confidence), left, top, max(xs) - left, max(ys) - top))
+        lines.append(normalized)
+    return OCRResult(_merge_candidates(["\n".join(lines)]), blocks, "easyocr")
+
+
+def _extract_paddleocr(path: Path) -> OCRResult:
+    try:
+        from paddleocr import PaddleOCR
+
+        reader = _paddle_reader()
+        raw = reader.ocr(str(path), cls=True)
+    except Exception:
+        return _extract_tesseract(path)
+
+    lines = []
+    blocks: list[OCRBlock] = []
+    for page in raw or []:
+        for item in page or []:
+            if len(item) < 2:
+                continue
+            box, rec = item[0], item[1]
+            text, confidence = rec[0], float(rec[1])
+            normalized = str(text).strip()
+            if not normalized or confidence < 0.5:
+                continue
+            xs = [int(point[0]) for point in box]
+            ys = [int(point[1]) for point in box]
+            left, top = min(xs), min(ys)
+            blocks.append(OCRBlock("line", normalized, confidence, left, top, max(xs) - left, max(ys) - top))
+            lines.append(normalized)
+    return OCRResult(_merge_candidates(["\n".join(lines)]), blocks, "paddleocr")
+
+
+def _easyocr_reader():
+    if not hasattr(_easyocr_reader, "_reader"):
+        import easyocr
+
+        _easyocr_reader._reader = easyocr.Reader(["ko", "en"], gpu=False)
+    return _easyocr_reader._reader
+
+
+def _paddle_reader():
+    if not hasattr(_paddle_reader, "_reader"):
+        from paddleocr import PaddleOCR
+
+        _paddle_reader._reader = PaddleOCR(use_angle_cls=True, lang="korean", show_log=False)
+    return _paddle_reader._reader
 
 
 def _prepare_image(image: Image.Image) -> Image.Image:

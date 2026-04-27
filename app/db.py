@@ -53,7 +53,27 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS photo_ocr (
             photo_id     INTEGER PRIMARY KEY,
             text_content TEXT NOT NULL DEFAULT '',
+            engine       TEXT NOT NULL DEFAULT 'tesseract',
             updated_at   INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS photo_ocr_blocks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            photo_id    INTEGER NOT NULL,
+            level       TEXT NOT NULL,
+            text        TEXT NOT NULL,
+            confidence  REAL NOT NULL DEFAULT 0,
+            left        INTEGER NOT NULL DEFAULT 0,
+            top         INTEGER NOT NULL DEFAULT 0,
+            width       INTEGER NOT NULL DEFAULT 0,
+            height      INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS photo_ocr_grams (
+            photo_id INTEGER NOT NULL,
+            gram     TEXT NOT NULL,
+            count    INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (photo_id, gram)
         );
 
         CREATE TABLE IF NOT EXISTS photo_faces (
@@ -80,10 +100,15 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_photos_status     ON photos(status);
         CREATE INDEX IF NOT EXISTS idx_photos_created_at ON photos(created_at);
         CREATE INDEX IF NOT EXISTS idx_photos_city       ON photos(city);
+        CREATE INDEX IF NOT EXISTS idx_ocr_blocks_photo  ON photo_ocr_blocks(photo_id);
+        CREATE INDEX IF NOT EXISTS idx_ocr_grams_gram    ON photo_ocr_grams(gram);
     """)
     _ensure_column(conn, "photos", "file_size", "INTEGER")
     _ensure_column(conn, "photos", "modified_at", "INTEGER")
+    _ensure_column(conn, "photo_ocr", "engine", "TEXT NOT NULL DEFAULT 'tesseract'")
     _ensure_ocr_fts(conn)
+    _ensure_search_doc_fts(conn)
+    _backfill_missing_search_docs(conn)
     conn.commit()
     conn.close()
 
@@ -97,6 +122,20 @@ def _ensure_ocr_fts(conn: sqlite3.Connection) -> None:
             "CREATE VIRTUAL TABLE IF NOT EXISTS photo_ocr_fts USING fts5(photo_id UNINDEXED, text_content)"
         )
         _rebuild_ocr_fts(conn)
+
+
+def _ensure_search_doc_fts(conn: sqlite3.Connection) -> None:
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='photo_search_docs'"
+    )
+    if cur.fetchone() is None:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS photo_search_docs
+            USING fts5(photo_id UNINDEXED, text_content)
+            """
+        )
+        _rebuild_search_docs(conn)
 
 
 def _ensure_column(
@@ -122,6 +161,28 @@ def _rebuild_ocr_fts(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def _rebuild_search_docs(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM photo_search_docs")
+    cur = conn.execute("SELECT id FROM photos WHERE status='indexed'")
+    for row in cur.fetchall():
+        _refresh_search_doc(conn, int(row["id"]))
+    conn.commit()
+
+
+def _backfill_missing_search_docs(conn: sqlite3.Connection) -> None:
+    cur = conn.execute(
+        """
+        SELECT p.id
+        FROM photos AS p
+        LEFT JOIN photo_search_docs AS d ON d.photo_id = p.id
+        WHERE p.status='indexed'
+          AND d.photo_id IS NULL
+        """
+    )
+    for row in cur.fetchall():
+        _refresh_search_doc(conn, int(row["id"]))
 
 
 def requeue_pending(conn: sqlite3.Connection) -> int:
@@ -273,16 +334,23 @@ def update_photo_indexed(
     conn.commit()
 
 
-def update_photo_ocr(conn: sqlite3.Connection, photo_id: int, text_content: str) -> None:
+def update_photo_ocr(
+    conn: sqlite3.Connection,
+    photo_id: int,
+    text_content: str,
+    blocks: list | None = None,
+    engine: str = "tesseract",
+) -> None:
     now = int(time.time())
     conn.execute(
-        """INSERT INTO photo_ocr (photo_id, text_content, updated_at)
-           VALUES (?, ?, ?)
+        """INSERT INTO photo_ocr (photo_id, text_content, engine, updated_at)
+           VALUES (?, ?, ?, ?)
            ON CONFLICT(photo_id) DO UPDATE SET
              text_content=excluded.text_content,
+             engine=excluded.engine,
              updated_at=excluded.updated_at
         """,
-        (photo_id, text_content, now),
+        (photo_id, text_content, engine, now),
     )
     conn.execute("DELETE FROM photo_ocr_fts WHERE photo_id=?", (photo_id,))
     if text_content:
@@ -290,6 +358,9 @@ def update_photo_ocr(conn: sqlite3.Connection, photo_id: int, text_content: str)
             "INSERT INTO photo_ocr_fts(photo_id, text_content) VALUES (?, ?)",
             (photo_id, text_content),
         )
+    _replace_ocr_blocks(conn, photo_id, blocks or [])
+    _replace_ocr_grams(conn, photo_id, text_content)
+    _refresh_search_doc(conn, photo_id)
     conn.commit()
 
 
@@ -304,6 +375,7 @@ def update_photo_faces(conn: sqlite3.Connection, photo_id: int, face_count: int)
         """,
         (photo_id, max(0, int(face_count)), now),
     )
+    _refresh_search_doc(conn, photo_id)
     conn.commit()
 
 
@@ -337,7 +409,96 @@ def update_photo_analysis(conn: sqlite3.Connection, photo_id: int, analysis: dic
             now,
         ),
     )
+    _refresh_search_doc(conn, photo_id)
     conn.commit()
+
+
+def _replace_ocr_blocks(conn: sqlite3.Connection, photo_id: int, blocks: list) -> None:
+    conn.execute("DELETE FROM photo_ocr_blocks WHERE photo_id=?", (photo_id,))
+    if not blocks:
+        return
+    rows = []
+    for block in blocks[:1000]:
+        get = block.get if isinstance(block, dict) else lambda key, default=None: getattr(block, key, default)
+        text = str(get("text", "")).strip()
+        if not text:
+            continue
+        rows.append(
+            (
+                photo_id,
+                str(get("level", "word")),
+                text,
+                float(get("confidence", 0.0) or 0.0),
+                int(get("left", 0) or 0),
+                int(get("top", 0) or 0),
+                int(get("width", 0) or 0),
+                int(get("height", 0) or 0),
+            )
+        )
+    conn.executemany(
+        """INSERT INTO photo_ocr_blocks
+           (photo_id, level, text, confidence, left, top, width, height)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
+
+
+def _replace_ocr_grams(conn: sqlite3.Connection, photo_id: int, text_content: str) -> None:
+    conn.execute("DELETE FROM photo_ocr_grams WHERE photo_id=?", (photo_id,))
+    grams = _korean_2grams(text_content)
+    if not grams:
+        return
+    counts: dict[str, int] = {}
+    for gram in grams:
+        counts[gram] = counts.get(gram, 0) + 1
+    conn.executemany(
+        "INSERT INTO photo_ocr_grams(photo_id, gram, count) VALUES (?, ?, ?)",
+        [(photo_id, gram, count) for gram, count in counts.items()],
+    )
+
+
+def _refresh_search_doc(conn: sqlite3.Connection, photo_id: int) -> None:
+    cur = conn.execute(
+        """
+        SELECT p.id, o.text_content AS ocr_text, COALESCE(o.engine, '') AS ocr_engine,
+               COALESCE(f.face_count, 0) AS face_count,
+               COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+               COALESCE(a.is_document_like, 0) AS is_document_like,
+               COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like
+        FROM photos AS p
+        LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+        WHERE p.id=?
+        """,
+        (photo_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return
+
+    tags = []
+    if int(row["face_count"] or 0) > 0:
+        tags.extend(["face", "person", f"face-{int(row['face_count'])}"])
+    if row["is_text_heavy"]:
+        tags.extend(["text", "text-heavy", "글자", "텍스트"])
+    if row["is_document_like"]:
+        tags.extend(["document", "문서"])
+    if row["is_screenshot_like"]:
+        tags.extend(["screen", "screenshot", "화면", "스크린샷"])
+
+    text = "\n".join(
+        part
+        for part in [
+            str(row["ocr_text"] or ""),
+            " ".join(tags),
+            f"ocr-engine:{row['ocr_engine']}" if row["ocr_engine"] else "",
+        ]
+        if part
+    )
+    conn.execute("DELETE FROM photo_search_docs WHERE photo_id=?", (photo_id,))
+    if text.strip():
+        conn.execute("INSERT INTO photo_search_docs(photo_id, text_content) VALUES (?, ?)", (photo_id, text))
 
 
 def mark_photo_error(conn: sqlite3.Connection, photo_id: int, error: str) -> None:
@@ -551,18 +712,84 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
     )
     rows.extend(like_cur.fetchall())
 
+    grams = _korean_2grams(cleaned)
+    if grams:
+        gram_placeholders = ",".join("?" * len(grams))
+        gram_cur = conn.execute(
+            f"""
+            SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
+                   COALESCE(f.face_count, 0) AS face_count,
+                   COALESCE(a.text_char_count, 0) AS text_char_count,
+                   COALESCE(a.text_line_count, 0) AS text_line_count,
+                   COALESCE(a.edge_density, 0) AS edge_density,
+                   COALESCE(a.brightness, 0) AS brightness,
+                   COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+                   COALESCE(a.is_document_like, 0) AS is_document_like,
+                   COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like,
+                   -SUM(g.count) AS rank
+            FROM photo_ocr_grams AS g
+            JOIN photo_ocr AS o ON o.photo_id = g.photo_id
+            JOIN photos AS p ON p.id = o.photo_id
+            LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+            LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+            WHERE p.status='indexed'
+              AND g.gram IN ({gram_placeholders})
+            GROUP BY p.id
+            HAVING COUNT(DISTINCT g.gram) >= ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            [*grams, max(1, len(set(grams)) // 2), fetch_limit],
+        )
+        rows.extend(gram_cur.fetchall())
+
     results = []
     seen_ids: set[int] = set()
     for row in rows:
         if row["id"] in seen_ids:
             continue
         match_kind = _ocr_match_kind(cleaned, row["ocr_text"] or "")
+        if match_kind is None and grams and _ocr_gram_match(grams, row["ocr_text"] or ""):
+            match_kind = "gram"
         if match_kind is None:
             continue
         seen_ids.add(row["id"])
         results.append(_ocr_row_to_result(row, match_kind))
     results.sort(key=lambda item: (_ocr_match_priority(item["ocr_match_kind"]), item["ocr_rank"]))
     return results[:limit]
+
+
+def search_by_shadow_doc(conn: sqlite3.Connection, query: str, limit: int = 20) -> list[dict]:
+    cleaned = query.strip()
+    if not cleaned:
+        return []
+    term = cleaned.replace('"', '""')
+    cur = conn.execute(
+        """
+        SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
+               COALESCE(f.face_count, 0) AS face_count,
+               COALESCE(a.text_char_count, 0) AS text_char_count,
+               COALESCE(a.text_line_count, 0) AS text_line_count,
+               COALESCE(a.edge_density, 0) AS edge_density,
+               COALESCE(a.brightness, 0) AS brightness,
+               COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+               COALESCE(a.is_document_like, 0) AS is_document_like,
+               COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like,
+               bm25(photo_search_docs) AS rank
+        FROM photo_search_docs
+        JOIN photos AS p ON p.id = photo_search_docs.photo_id
+        LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+        WHERE photo_search_docs MATCH ?
+          AND p.status='indexed'
+        ORDER BY rank
+        LIMIT ?
+        """,
+        (f'"{term}" OR "{term}"*', limit),
+    )
+    rows = cur.fetchall()
+    return [_search_doc_row_to_result(row) for row in rows]
 
 
 def _gallery_order_clause(sort: str) -> str:
@@ -614,6 +841,28 @@ def _ocr_row_to_result(row: sqlite3.Row, match_kind: str) -> dict:
     }
 
 
+def _search_doc_row_to_result(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "file_path": row["file_path"],
+        "created_at": row["created_at"],
+        "city": row["city"],
+        "country": row["country"],
+        "ocr_text": row["ocr_text"],
+        "face_count": row["face_count"],
+        "text_char_count": row["text_char_count"],
+        "text_line_count": row["text_line_count"],
+        "edge_density": row["edge_density"],
+        "brightness": row["brightness"],
+        "is_text_heavy": row["is_text_heavy"],
+        "is_document_like": row["is_document_like"],
+        "is_screenshot_like": row["is_screenshot_like"],
+        "shadow_rank": float(row["rank"]) if "rank" in row.keys() else 0.0,
+        "match_reason": "shadow",
+        "distance": None,
+    }
+
+
 def _ocr_match_kind(query: str, text: str) -> str | None:
     normalized_query = query.casefold().strip()
     normalized_text = text.casefold()
@@ -641,4 +890,21 @@ def _ocr_match_priority(match_kind: str) -> int:
         return 0
     if match_kind == "phrase":
         return 1
+    if match_kind == "gram":
+        return 3
     return 2
+
+
+def _korean_2grams(text: str) -> list[str]:
+    compact = re.sub(r"[^0-9a-zA-Z가-힣]+", "", text.casefold())
+    if len(compact) < 2:
+        return []
+    return [compact[idx : idx + 2] for idx in range(len(compact) - 1)]
+
+
+def _ocr_gram_match(query_grams: list[str], text: str) -> bool:
+    text_grams = set(_korean_2grams(text))
+    if not text_grams:
+        return False
+    required = max(1, len(set(query_grams)) // 2)
+    return sum(1 for gram in set(query_grams) if gram in text_grams) >= required
