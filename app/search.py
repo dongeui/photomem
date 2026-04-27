@@ -59,7 +59,10 @@ def search(
 
     for index, result in enumerate(clip_results):
         result["match_reason"] = result.get("match_reason") or "clip"
-        result["rank_score"] = max(0.0, 0.65 - (index * 0.01))
+        # Convert L2 distance to score. For L2-normalized vectors:
+        # cosine_sim = 1 - dist^2/2. Cap at 0.65 so OCR hits can compete.
+        dist = float(result.get("distance") or 1.5)
+        result["rank_score"] = max(0.0, min(0.65, 1.0 - (dist ** 2) / 2))
         if result["id"] in seen_ids:
             existing = next(item for item in merged if item["id"] == result["id"])
             existing["match_reason"] = "ocr+clip"
