@@ -39,16 +39,12 @@ def _split_ranked_results(results: list[dict]) -> tuple[list[dict], list[dict]]:
 
     ranked = [result for result in results if result.get("rank_score") is not None]
     if ranked:
-        for result in ranked:
-            result["score"] = max(0, min(100, round(float(result["rank_score"]) * 100)))
+        for result in results:
+            result["score"] = max(0, min(100, round(float(result.get("rank_score", 0.0)) * 100)))
 
-        close_results = [result for result in results if float(result.get("rank_score", 0.0)) >= 0.55]
-        if not close_results:
-            close_count = min(12, max(4, len(results) // 3))
-            close_results = results[:close_count]
-        close_ids = {result["id"] for result in close_results}
-        other_results = [result for result in results if result["id"] not in close_ids]
-        return close_results, other_results
+        scores = [float(r.get("rank_score", 0.0)) for r in results]
+        split_at = _gap_split(scores, max_close=12, min_threshold=0.40)
+        return results[:split_at], results[split_at:]
 
     distances = [float(r.get("distance", 0.0)) for r in results if r.get("distance") is not None]
     if not distances:
@@ -67,6 +63,33 @@ def _split_ranked_results(results: list[dict]) -> tuple[list[dict], list[dict]]:
     close_results = results[:close_count]
     other_results = results[close_count:]
     return close_results, other_results
+
+
+def _gap_split(scores: list[float], max_close: int = 12, min_threshold: float = 0.40) -> int:
+    """Return index where results should split into 'close' and 'other'.
+
+    Finds the largest score drop among the first max_close+1 positions.
+    Falls back to min_threshold if no significant gap (>0.10) exists.
+    Always returns at least 1 and at most max_close.
+    """
+    cap = min(max_close, len(scores))
+    best_gap = 0.0
+    best_idx = cap  # default: put everything in close (up to cap)
+
+    for i in range(1, cap + 1):
+        prev = scores[i - 1]
+        curr = scores[i] if i < len(scores) else 0.0
+        gap = prev - curr
+        if gap > best_gap:
+            best_gap = gap
+            best_idx = i
+
+    # Only honour the gap split if it's significant
+    if best_gap < 0.10:
+        # Fall back to threshold
+        best_idx = sum(1 for s in scores if s >= min_threshold)
+
+    return max(1, min(best_idx, max_close))
 
 
 async def _load_models_and_start_indexer() -> None:
