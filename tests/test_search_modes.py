@@ -113,3 +113,35 @@ def test_face_hint_query_boosts_face_results(monkeypatch):
     assert results[0]["id"] == 2
     assert results[0]["face_match"] is True
     assert results[0]["rank_score"] > results[1]["rank_score"]
+
+
+def test_exact_ocr_match_boosts_text_result(monkeypatch):
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(
+        search.db,
+        "search_by_ocr",
+        lambda _conn, _query, limit=20: [
+            {
+                "id": 3,
+                "ocr_rank": -5.0,
+                "ocr_text": "전송 실패 오류코드 T001",
+                "text_char_count": 12,
+                "text_line_count": 1,
+                "is_text_heavy": 1,
+                "is_document_like": 1,
+                "is_screenshot_like": 1,
+            },
+        ],
+    )
+    monkeypatch.setattr(search.db, "search_by_embedding", lambda *args, **kwargs: [])
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
+
+    results = search.search("전송 실패", mode="ocr", limit=5)
+
+    assert results[0]["ocr_exact_match"] is True
+    assert "전송 실패" in results[0]["ocr_excerpt"]
+    assert results[0]["rank_score"] > 0.9

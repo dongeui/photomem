@@ -26,12 +26,21 @@ def extract_text(image_path: str) -> str:
 
     try:
         with Image.open(path) as image:
-            prepared = _prepare_image(image)
-            text = pytesseract.image_to_string(prepared, lang=OCR_LANG, config="--psm 6")
+            candidates = []
+            for prepared, config in (
+                (_prepare_image(image), "--oem 1 --psm 6"),
+                (_prepare_threshold_image(image), "--oem 1 --psm 11"),
+            ):
+                text = pytesseract.image_to_string(prepared, lang=OCR_LANG, config=config)
+                normalized = _normalize_text(text)
+                if normalized:
+                    candidates.append(normalized)
     except Exception:
         return ""
 
-    return _normalize_text(text)
+    if not candidates:
+        return ""
+    return _merge_candidates(candidates)
 
 
 def _prepare_image(image: Image.Image) -> Image.Image:
@@ -42,7 +51,29 @@ def _prepare_image(image: Image.Image) -> Image.Image:
     return boosted
 
 
+def _prepare_threshold_image(image: Image.Image) -> Image.Image:
+    prepared = _prepare_image(image)
+    thresholded = prepared.point(lambda px: 255 if px > 170 else 0)
+    return thresholded
+
+
 def _normalize_text(text: str) -> str:
     parts = [line.strip() for line in text.splitlines()]
     compact = [part for part in parts if part]
     return "\n".join(compact)
+
+
+def _merge_candidates(candidates: list[str]) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        for line in candidate.splitlines():
+            normalized = line.strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(normalized)
+    return "\n".join(lines)

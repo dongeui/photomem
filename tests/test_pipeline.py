@@ -152,6 +152,57 @@ def test_get_missing_face_paths(initialized_db):
     assert "/fake/missing-face.jpg" not in missing_after
 
 
+def test_update_and_filter_analysis_tags(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/document.jpg", "dochash")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    db.update_photo_analysis(
+        conn,
+        photo_id,
+        {
+            "text_char_count": 120,
+            "text_line_count": 6,
+            "edge_density": 0.04,
+            "brightness": 0.8,
+            "is_text_heavy": 1,
+            "is_document_like": 1,
+            "is_screenshot_like": 1,
+        },
+    )
+
+    docs = db.list_photos(conn, limit=10, filter_tag="documents")
+    assert any(photo["id"] == photo_id for photo in docs)
+
+    text_sorted = db.list_photos(conn, limit=10, sort="text")
+    matching = next(photo for photo in text_sorted if photo["id"] == photo_id)
+    assert matching["text_char_count"] == 120
+
+
+def test_get_missing_analysis_paths(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/missing-analysis.jpg", "missinganalysis")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+
+    missing_before = db.get_missing_analysis_paths(conn)
+    assert "/fake/missing-analysis.jpg" in missing_before
+
+    db.update_photo_analysis(
+        conn,
+        photo_id,
+        {
+            "text_char_count": 10,
+            "text_line_count": 1,
+            "edge_density": 0.02,
+            "brightness": 0.5,
+            "is_text_heavy": 0,
+            "is_document_like": 0,
+            "is_screenshot_like": 0,
+        },
+    )
+    missing_after = db.get_missing_analysis_paths(conn)
+    assert "/fake/missing-analysis.jpg" not in missing_after
+
+
 def test_thumbnail_path_bucketing():
     # Ensure thumbnails spread across subdirs
     p1 = thumbnails.thumb_path(1)

@@ -61,6 +61,18 @@ def init_db() -> None:
             updated_at   INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS photo_analysis (
+            photo_id            INTEGER PRIMARY KEY,
+            text_char_count     INTEGER NOT NULL DEFAULT 0,
+            text_line_count     INTEGER NOT NULL DEFAULT 0,
+            edge_density        REAL NOT NULL DEFAULT 0,
+            brightness          REAL NOT NULL DEFAULT 0,
+            is_text_heavy       INTEGER NOT NULL DEFAULT 0,
+            is_document_like    INTEGER NOT NULL DEFAULT 0,
+            is_screenshot_like  INTEGER NOT NULL DEFAULT 0,
+            updated_at          INTEGER NOT NULL
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_photos
             USING vec0(embedding float[512]);
 
@@ -144,6 +156,14 @@ def photo_has_face_data(conn: sqlite3.Connection, photo_id: int) -> bool:
     return cur.fetchone() is not None
 
 
+def photo_has_analysis_data(conn: sqlite3.Connection, photo_id: int) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM photo_analysis WHERE photo_id=?",
+        (photo_id,),
+    )
+    return cur.fetchone() is not None
+
+
 def get_missing_ocr_paths(conn: sqlite3.Connection) -> list[str]:
     cur = conn.execute(
         """
@@ -165,6 +185,19 @@ def get_missing_face_paths(conn: sqlite3.Connection) -> list[str]:
         LEFT JOIN photo_faces AS f ON f.photo_id = p.id
         WHERE p.status='indexed'
           AND f.photo_id IS NULL
+        """
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def get_missing_analysis_paths(conn: sqlite3.Connection) -> list[str]:
+    cur = conn.execute(
+        """
+        SELECT p.file_path
+        FROM photos AS p
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+        WHERE p.status='indexed'
+          AND a.photo_id IS NULL
         """
     )
     return [row[0] for row in cur.fetchall()]
@@ -273,6 +306,39 @@ def update_photo_faces(conn: sqlite3.Connection, photo_id: int, face_count: int)
     conn.commit()
 
 
+def update_photo_analysis(conn: sqlite3.Connection, photo_id: int, analysis: dict) -> None:
+    now = int(time.time())
+    conn.execute(
+        """INSERT INTO photo_analysis (
+               photo_id, text_char_count, text_line_count, edge_density, brightness,
+               is_text_heavy, is_document_like, is_screenshot_like, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(photo_id) DO UPDATE SET
+             text_char_count=excluded.text_char_count,
+             text_line_count=excluded.text_line_count,
+             edge_density=excluded.edge_density,
+             brightness=excluded.brightness,
+             is_text_heavy=excluded.is_text_heavy,
+             is_document_like=excluded.is_document_like,
+             is_screenshot_like=excluded.is_screenshot_like,
+             updated_at=excluded.updated_at
+        """,
+        (
+            photo_id,
+            int(analysis.get("text_char_count", 0)),
+            int(analysis.get("text_line_count", 0)),
+            float(analysis.get("edge_density", 0.0)),
+            float(analysis.get("brightness", 0.0)),
+            int(bool(analysis.get("is_text_heavy"))),
+            int(bool(analysis.get("is_document_like"))),
+            int(bool(analysis.get("is_screenshot_like"))),
+            now,
+        ),
+    )
+    conn.commit()
+
+
 def mark_photo_error(conn: sqlite3.Connection, photo_id: int, error: str) -> None:
     conn.execute(
         "UPDATE photos SET status='error', error_msg=? WHERE id=?",
@@ -299,17 +365,49 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
-def list_photos(conn: sqlite3.Connection, limit: int = 120, offset: int = 0) -> list[dict]:
+def count_photos(conn: sqlite3.Connection, filter_tag: str = "all") -> int:
+    where_sql, params = _photo_filter_clause(filter_tag)
     cur = conn.execute(
-        """SELECT p.id, p.file_path, p.created_at, p.city, p.country, p.status, p.error_msg,
-                  o.text_content AS ocr_text, COALESCE(f.face_count, 0) AS face_count
+        f"""
+        SELECT COUNT(*)
+        FROM photos AS p
+        LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    return int(cur.fetchone()[0] or 0)
+
+
+def list_photos(
+    conn: sqlite3.Connection,
+    limit: int = 120,
+    offset: int = 0,
+    sort: str = "recent",
+    filter_tag: str = "all",
+) -> list[dict]:
+    where_sql, params = _photo_filter_clause(filter_tag)
+    order_sql = _gallery_order_clause(sort)
+    cur = conn.execute(
+        f"""SELECT p.id, p.file_path, p.created_at, p.city, p.country, p.status, p.error_msg,
+                  o.text_content AS ocr_text, COALESCE(f.face_count, 0) AS face_count,
+                  COALESCE(a.text_char_count, 0) AS text_char_count,
+                  COALESCE(a.text_line_count, 0) AS text_line_count,
+                  COALESCE(a.edge_density, 0) AS edge_density,
+                  COALESCE(a.brightness, 0) AS brightness,
+                  COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+                  COALESCE(a.is_document_like, 0) AS is_document_like,
+                  COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like
            FROM photos AS p
            LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
            LEFT JOIN photo_faces AS f ON f.photo_id = p.id
-           WHERE p.status='indexed'
-           ORDER BY COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC
+           LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+           WHERE {where_sql}
+           ORDER BY {order_sql}
            LIMIT ? OFFSET ?""",
-        (limit, offset),
+        [*params, limit, offset],
     )
     return [dict(row) for row in cur.fetchall()]
 
@@ -356,10 +454,18 @@ def search_by_embedding(
     where_sql = " AND ".join(where_clauses)
     cur = conn.execute(
         f"""SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
-                   COALESCE(f.face_count, 0) AS face_count
+                   COALESCE(f.face_count, 0) AS face_count,
+                   COALESCE(a.text_char_count, 0) AS text_char_count,
+                   COALESCE(a.text_line_count, 0) AS text_line_count,
+                   COALESCE(a.edge_density, 0) AS edge_density,
+                   COALESCE(a.brightness, 0) AS brightness,
+                   COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+                   COALESCE(a.is_document_like, 0) AS is_document_like,
+                   COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like
             FROM photos AS p
             LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
             LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+            LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
             WHERE {where_sql}""",
         params,
     )
@@ -373,6 +479,13 @@ def search_by_embedding(
             "country":    row["country"],
             "ocr_text":   row["ocr_text"],
             "face_count": row["face_count"],
+            "text_char_count": row["text_char_count"],
+            "text_line_count": row["text_line_count"],
+            "edge_density": row["edge_density"],
+            "brightness": row["brightness"],
+            "is_text_heavy": row["is_text_heavy"],
+            "is_document_like": row["is_document_like"],
+            "is_screenshot_like": row["is_screenshot_like"],
             "distance":   dist_map[row["id"]],
         }
         for row in rows
@@ -390,11 +503,20 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
     cur = conn.execute(
         """
         SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
-               COALESCE(f.face_count, 0) AS face_count, bm25(photo_ocr_fts) AS rank
+               COALESCE(f.face_count, 0) AS face_count,
+               COALESCE(a.text_char_count, 0) AS text_char_count,
+               COALESCE(a.text_line_count, 0) AS text_line_count,
+               COALESCE(a.edge_density, 0) AS edge_density,
+               COALESCE(a.brightness, 0) AS brightness,
+               COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+               COALESCE(a.is_document_like, 0) AS is_document_like,
+               COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like,
+               bm25(photo_ocr_fts) AS rank
         FROM photo_ocr_fts
         JOIN photo_ocr AS o ON o.photo_id = photo_ocr_fts.photo_id
         JOIN photos AS p ON p.id = o.photo_id
         LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
         WHERE photo_ocr_fts MATCH ?
           AND p.status='indexed'
         ORDER BY rank
@@ -414,9 +536,42 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
                 "country": row["country"],
                 "ocr_text": row["ocr_text"],
                 "face_count": row["face_count"],
+                "text_char_count": row["text_char_count"],
+                "text_line_count": row["text_line_count"],
+                "edge_density": row["edge_density"],
+                "brightness": row["brightness"],
+                "is_text_heavy": row["is_text_heavy"],
+                "is_document_like": row["is_document_like"],
+                "is_screenshot_like": row["is_screenshot_like"],
                 "ocr_rank": float(row["rank"]),
                 "match_reason": "ocr",
                 "distance": None,
             }
         )
     return results
+
+
+def _gallery_order_clause(sort: str) -> str:
+    if sort == "oldest":
+        return "COALESCE(p.created_at, p.indexed_at, 0) ASC, p.id ASC"
+    if sort == "faces":
+        return "COALESCE(f.face_count, 0) DESC, COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC"
+    if sort == "text":
+        return "COALESCE(a.text_char_count, 0) DESC, COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC"
+    return "COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC"
+
+
+def _photo_filter_clause(filter_tag: str) -> tuple[str, list]:
+    where_clauses = ["p.status='indexed'"]
+    params: list = []
+
+    if filter_tag == "faces":
+        where_clauses.append("COALESCE(f.face_count, 0) > 0")
+    elif filter_tag == "text":
+        where_clauses.append("(COALESCE(a.is_text_heavy, 0) = 1 OR length(COALESCE(o.text_content, '')) >= 12)")
+    elif filter_tag == "documents":
+        where_clauses.append("COALESCE(a.is_document_like, 0) = 1")
+    elif filter_tag == "screens":
+        where_clauses.append("COALESCE(a.is_screenshot_like, 0) = 1")
+
+    return " AND ".join(where_clauses), params

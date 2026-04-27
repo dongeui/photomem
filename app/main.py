@@ -190,10 +190,26 @@ async def status_fragment(request: Request):
 
 
 @app.get("/gallery", response_class=HTMLResponse)
-async def gallery_fragment(request: Request, limit: int = Query(120, ge=1, le=240)):
+async def gallery_fragment(
+    request: Request,
+    limit: int = Query(60, ge=12, le=120),
+    page: int = Query(1, ge=1),
+    sort: str = Query("recent"),
+    filter_tag: str = Query("all"),
+):
+    sort_value = sort if sort in {"recent", "oldest", "faces", "text"} else "recent"
+    filter_value = filter_tag if filter_tag in {"all", "faces", "text", "documents", "screens"} else "all"
+    offset = (page - 1) * limit
     conn = db.get_connection()
     try:
-        photos = db.list_photos(conn, limit=limit)
+        total = db.count_photos(conn, filter_tag=filter_value)
+        photos = db.list_photos(
+            conn,
+            limit=limit,
+            offset=offset,
+            sort=sort_value,
+            filter_tag=filter_value,
+        )
     finally:
         conn.close()
 
@@ -202,6 +218,13 @@ async def gallery_fragment(request: Request, limit: int = Query(120, ge=1, le=24
         {
             "request": request,
             "photos": photos,
+            "page": page,
+            "limit": limit,
+            "sort": sort_value,
+            "filter_tag": filter_value,
+            "total": total,
+            "has_prev": page > 1,
+            "has_next": offset + len(photos) < total,
         },
     )
 

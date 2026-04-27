@@ -1,10 +1,90 @@
+<style>
+  .gallery-toolbar {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 0.9rem;
+  }
+
+  .gallery-toolbar select,
+  .gallery-toolbar button {
+    background: #1a1a1a;
+    color: #d8d8d8;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 0.4rem 0.65rem;
+    font-size: 0.78rem;
+  }
+
+  .gallery-toolbar button {
+    cursor: pointer;
+  }
+
+  .gallery-meta {
+    color: #666;
+    font-size: 0.78rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .gallery-pager {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .gallery-pager button[disabled] {
+    opacity: 0.35;
+    cursor: default;
+  }
+</style>
+
+<form
+  class="gallery-toolbar"
+  hx-get="/gallery"
+  hx-target="#results"
+  hx-swap="innerHTML"
+  hx-trigger="change"
+>
+  <input type="hidden" name="limit" value="{{ limit }}">
+  <input type="hidden" name="page" value="1">
+  <select name="sort">
+    <option value="recent" {% if sort == "recent" %}selected{% endif %}>최신순</option>
+    <option value="oldest" {% if sort == "oldest" %}selected{% endif %}>오래된순</option>
+    <option value="faces" {% if sort == "faces" %}selected{% endif %}>얼굴 많은순</option>
+    <option value="text" {% if sort == "text" %}selected{% endif %}>텍스트 많은순</option>
+  </select>
+  <select name="filter_tag">
+    <option value="all" {% if filter_tag == "all" %}selected{% endif %}>전체</option>
+    <option value="faces" {% if filter_tag == "faces" %}selected{% endif %}>얼굴 있음</option>
+    <option value="text" {% if filter_tag == "text" %}selected{% endif %}>텍스트 많음</option>
+    <option value="documents" {% if filter_tag == "documents" %}selected{% endif %}>문서형</option>
+    <option value="screens" {% if filter_tag == "screens" %}selected{% endif %}>스크린샷형</option>
+  </select>
+</form>
+
 {% if not photos %}
   <p style="color:#555; font-size:0.9rem; padding-top:1rem;">
-    아직 인덱싱된 사진이 없습니다.
+    표시할 사진이 없습니다.
   </p>
 {% else %}
-  <p style="color:#666; font-size:0.78rem; margin-bottom:0.75rem;">
-    최근 인덱싱된 사진 {{ photos|length }}개
-  </p>
+  <div class="gallery-meta">
+    {{ total }}개 중 {{ ((page - 1) * limit) + 1 }}-{{ ((page - 1) * limit) + (photos|length) }}개 표시
+  </div>
   {% include "_photo_cards.html" %}
+
+  <div class="gallery-pager">
+    <button
+      hx-get="/gallery?page={{ page - 1 }}&limit={{ limit }}&sort={{ sort }}&filter_tag={{ filter_tag }}"
+      hx-target="#results"
+      hx-swap="innerHTML"
+      {% if not has_prev %}disabled{% endif %}
+    >이전</button>
+    <button
+      hx-get="/gallery?page={{ page + 1 }}&limit={{ limit }}&sort={{ sort }}&filter_tag={{ filter_tag }}"
+      hx-target="#results"
+      hx-swap="innerHTML"
+      {% if not has_next %}disabled{% endif %}
+    >다음</button>
+  </div>
 {% endif %}

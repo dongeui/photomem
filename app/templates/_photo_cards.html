@@ -73,6 +73,16 @@
     color: #f3c8a0;
   }
 
+  .photo-badge-text {
+    background: #25384b;
+    color: #b6d7f4;
+  }
+
+  .photo-badge-doc {
+    background: #314427;
+    color: #cae9b7;
+  }
+
   .photo-ocr {
     color: #8f8f8f;
     font-size: 0.68rem;
@@ -113,8 +123,17 @@
       {% if photo.face_count %}
       <div class="photo-badge photo-badge-face">Face {{ photo.face_count }}</div>
       {% endif %}
+      {% if photo.is_text_heavy %}
+      <div class="photo-badge photo-badge-text">Text-heavy</div>
+      {% endif %}
+      {% if photo.is_document_like %}
+      <div class="photo-badge photo-badge-doc">Document</div>
+      {% endif %}
+      {% if photo.is_screenshot_like %}
+      <div class="photo-badge">Screen</div>
+      {% endif %}
       {% if photo.ocr_text %}
-      <div class="photo-ocr">{{ photo.ocr_text }}</div>
+      <div class="photo-ocr">{{ photo.ocr_excerpt or photo.ocr_text }}</div>
       {% endif %}
       <div class="photo-path">{{ photo.file_path }}</div>
     </div>

@@ -23,7 +23,6 @@
     header h1 {
       font-size: 1.1rem;
       font-weight: 600;
-      letter-spacing: 0;
       color: #fff;
       margin-bottom: 1rem;
     }
@@ -139,7 +138,7 @@
           id="search-input"
           name="q"
           type="search"
-          placeholder="사진 검색 - 텍스트 포함, sunset beach, 가족 여행"
+          placeholder="사진 검색 - 텍스트 포함, 전송 실패, sunset beach, 가족 여행"
           autocomplete="off"
           autofocus
         >
@@ -154,25 +153,16 @@
           <label for="mode-semantic">의미</label>
         </div>
         <input name="city" type="text" placeholder="도시 (city)" list="city-options" autocomplete="off">
-        <datalist id="city-options"
-          hx-get="/cities"
-          hx-trigger="load"
-          hx-swap="innerHTML"
-        ></datalist>
+        <datalist id="city-options" hx-get="/cities" hx-trigger="load" hx-swap="innerHTML"></datalist>
         <input name="date_from" type="date" title="시작일">
         <input name="date_to" type="date" title="종료일">
       </div>
     </form>
   </header>
 
-  <div
-    id="status-bar"
-    hx-get="/status"
-    hx-trigger="load, every 5s"
-    hx-swap="innerHTML"
-  ></div>
+  <div id="status-bar" hx-get="/status" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
-  <div id="results" hx-get="/gallery" hx-trigger="load" hx-swap="innerHTML">
+  <div id="results" hx-get="/gallery?limit=60&page=1&sort=recent&filter_tag=all" hx-trigger="load" hx-swap="innerHTML">
     <p class="htmx-indicator" id="search-indicator">검색 중...</p>
     <p style="color:#444; font-size:0.9rem;">사진을 불러오는 중...</p>
   </div>
