@@ -107,7 +107,12 @@
         >
       </div>
       <div class="filters">
-        <input name="city" type="text" placeholder="도시 (city)">
+        <input name="city" type="text" placeholder="도시 (city)" list="city-options" autocomplete="off">
+        <datalist id="city-options"
+          hx-get="/cities"
+          hx-trigger="load"
+          hx-swap="innerHTML"
+        ></datalist>
         <input name="date_from" type="date" title="시작일">
         <input name="date_to" type="date" title="종료일">
       </div>

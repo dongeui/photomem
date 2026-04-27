@@ -205,6 +205,22 @@ async def thumbnail(photo_id: int):
     return Response(content=buf.getvalue(), media_type="image/jpeg")
 
 
+# ── data endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/cities")
+async def city_list():
+    conn = db.get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT DISTINCT city FROM photos WHERE city IS NOT NULL AND city != '' ORDER BY city"
+        )
+        cities = [row["city"] for row in cur.fetchall()]
+    finally:
+        conn.close()
+    options = "".join(f'<option value="{c}">' for c in cities)
+    return HTMLResponse(options)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _date_to_ts(date_str: str, end_of_day: bool = False) -> int:
