@@ -1,3 +1,60 @@
+## Current handoff snapshot (2026-04-27)
+
+### What this app does now
+
+- `photomem` is an offline screenshot/photo search app.
+- Host screenshots are mounted into `/data/photos` through Docker.
+- FastAPI serves the UI at `http://localhost:8000`.
+- Search is CLIP text-to-image semantic search, not face detection or OCR-only filtering.
+- The app keeps a local SQLite index with metadata in `photos` and embeddings in `vec_photos`.
+- Thumbnails are cached under `/app/cache/thumbnails` and shown in both search results and gallery.
+
+### Main runtime flow
+
+1. `app/main.py` starts FastAPI, validates the photo mount, initializes SQLite, and loads the CLIP model.
+2. `app/indexer.py` starts watchdog plus a periodic scan every `PHOTOMEM_SCAN_INTERVAL` seconds.
+3. New or changed files are queued for indexing.
+4. Each worker hashes the file, updates DB state, generates a thumbnail, reads EXIF date and GPS, reverse-geocodes location, then writes the CLIP image embedding.
+5. `app/search.py` encodes search text with the CLIP text encoder and runs KNN search through `sqlite-vec`.
+
+### Current implemented features
+
+- Multi-threaded indexing via `PHOTOMEM_INDEX_WORKERS`
+- Per-worker torch thread tuning via `PHOTOMEM_TORCH_THREADS`
+- 5-minute folder rescans for new or changed screenshots
+- Cached file stat tracking using `file_size` and `modified_at`
+- Thumbnail gallery endpoint at `/gallery`
+- OCR-backed text search (Tesseract kor+eng); BM25-normalized score [0.6, 1.0]
+- CLIP results scored by L2→cosine distance, capped at 0.65
+- `ocr+clip` combined hits score 1.0 (both signals agree)
+- Split search UI: gap-based dynamic split (largest score drop wins)
+- City autocomplete via `/cities` datalist loaded on page load
+
+### Important files
+
+- `app/main.py`: routes, startup, search result grouping, HTMX fragments, `_gap_split`
+- `app/indexer.py`: watcher, queue, workers, rescan loop
+- `app/db.py`: schema, migrations, stats, list/search queries, incremental FTS
+- `app/models.py`: shared CLIP model loading and text/image encoding
+- `app/search.py`: merged OCR + CLIP search with BM25/distance scoring
+- `app/ocr.py`: Tesseract wrapper with image prep
+- `app/templates/`: HTMX partials and card UI
+- `docs/system-structure.svg`: one-page system diagram
+
+### Known limits and next work ideas
+
+- Search relevance is CLIP-only for image content. "Male face" = semantic guess, not face classification.
+- No date-range pre-filter in the CLIP KNN step — all candidates fetched then filtered in Python.
+- Gallery has no pagination — limited to 120 photos.
+- No sort options (by date / by relevance) in the gallery view.
+- Exact people/face filtering needs a separate face/person pipeline (detection + tagging/embeddings).
+
+### Local run assumptions
+
+- Docker is the primary run path.
+- `.env` is expected to point `PHOTOMEM_HOST_PHOTOS` at the Windows screenshots folder.
+- Current compose settings use `PHOTOMEM_INDEX_WORKERS=4` and `PHOTOMEM_SCAN_INTERVAL=300`.
+
 
 ## Project context
 
