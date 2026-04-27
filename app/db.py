@@ -66,18 +66,18 @@ def init_db() -> None:
     _ensure_column(conn, "photos", "modified_at", "INTEGER")
     _ensure_ocr_fts(conn)
     conn.commit()
-    _rebuild_ocr_fts(conn)
     conn.close()
 
 
 def _ensure_ocr_fts(conn: sqlite3.Connection) -> None:
-    conn.execute("DROP TABLE IF EXISTS photo_ocr_fts")
-    conn.execute(
-        """
-        CREATE VIRTUAL TABLE photo_ocr_fts
-        USING fts5(photo_id UNINDEXED, text_content)
-        """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='photo_ocr_fts'"
     )
+    if cur.fetchone() is None:
+        conn.execute(
+            "CREATE VIRTUAL TABLE photo_ocr_fts USING fts5(photo_id UNINDEXED, text_content)"
+        )
+        _rebuild_ocr_fts(conn)
 
 
 def _ensure_column(
