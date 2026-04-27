@@ -45,6 +45,7 @@
       outline: none;
       transition: border-color 0.15s;
     }
+
     #search-input:focus { border-color: #555; }
     #search-input::placeholder { color: #555; }
 
@@ -53,9 +54,11 @@
       gap: 0.5rem;
       margin-top: 0.5rem;
       flex-wrap: wrap;
+      align-items: center;
     }
 
-    .filters input {
+    .filters input[type="text"],
+    .filters input[type="date"] {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
       color: #e8e8e8;
@@ -64,7 +67,41 @@
       border-radius: 6px;
       outline: none;
     }
+
     .filters input::placeholder { color: #555; }
+
+    .mode-switch {
+      display: inline-flex;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #161616;
+    }
+
+    .mode-switch input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .mode-switch label {
+      padding: 0.38rem 0.72rem;
+      font-size: 0.78rem;
+      color: #8f8f8f;
+      cursor: pointer;
+      user-select: none;
+      border-right: 1px solid #2a2a2a;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .mode-switch label:last-of-type {
+      border-right: 0;
+    }
+
+    .mode-switch input:checked + label {
+      background: #242f4a;
+      color: #dce7ff;
+    }
 
     #status-bar {
       padding: 0.4rem 2rem;
@@ -84,6 +121,7 @@
       font-size: 0.85rem;
       padding: 1rem 0;
     }
+
     .htmx-request .htmx-indicator { display: block; }
   </style>
 </head>
@@ -101,12 +139,20 @@
           id="search-input"
           name="q"
           type="search"
-          placeholder="사진 검색 - 예: 홍콩 여행, sunset beach, 가족 여행"
+          placeholder="사진 검색 - 텍스트 포함, sunset beach, 가족 여행"
           autocomplete="off"
           autofocus
         >
       </div>
       <div class="filters">
+        <div class="mode-switch">
+          <input id="mode-hybrid" name="mode" type="radio" value="hybrid" checked>
+          <label for="mode-hybrid">통합</label>
+          <input id="mode-ocr" name="mode" type="radio" value="ocr">
+          <label for="mode-ocr">텍스트</label>
+          <input id="mode-semantic" name="mode" type="radio" value="semantic">
+          <label for="mode-semantic">의미</label>
+        </div>
         <input name="city" type="text" placeholder="도시 (city)" list="city-options" autocomplete="off">
         <datalist id="city-options"
           hx-get="/cities"

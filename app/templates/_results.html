@@ -1,3 +1,5 @@
+{% set mode_label = {"hybrid": "통합", "ocr": "텍스트", "semantic": "의미"}[mode] if mode in ["hybrid", "ocr", "semantic"] else "통합" %}
+
 {% if error %}
   <p style="color:#e55; font-size:0.9rem;">오류: {{ error }}</p>
 
@@ -6,12 +8,32 @@
     {% if query %}
       "{{ query }}"에 해당하는 사진을 찾지 못했습니다.
     {% else %}
-      검색어를 입력하세요.
+      검색어를 입력해 주세요.
     {% endif %}
   </p>
 
 {% else %}
   <style>
+    .result-meta {
+      color: #666;
+      font-size: 0.78rem;
+      margin-bottom: 0.9rem;
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .result-mode {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.16rem 0.42rem;
+      border-radius: 999px;
+      border: 1px solid #2a2a2a;
+      color: #9ca9c6;
+      background: #171717;
+    }
+
     .result-section {
       margin-bottom: 1.75rem;
     }
@@ -40,9 +62,10 @@
     }
   </style>
 
-  <p style="color:#666; font-size:0.78rem; margin-bottom:0.9rem;">
-    {{ results|length }}개 결과 - "{{ query }}"
-  </p>
+  <div class="result-meta">
+    <span>{{ results|length }}개 결과 - "{{ query }}"</span>
+    <span class="result-mode">{{ mode_label }} 검색</span>
+  </div>
 
   <section class="result-section">
     <div class="result-heading">

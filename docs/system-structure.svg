@@ -1,0 +1,106 @@
+<svg width="1400" height="900" viewBox="0 0 1400 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1400" height="900" fill="#F6F4EE"/>
+  <rect x="40" y="28" width="1320" height="844" rx="28" fill="#FFFDF8" stroke="#D7D1C5" stroke-width="2"/>
+
+  <text x="72" y="88" fill="#1F2937" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">photomem system structure</text>
+  <text x="72" y="122" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="18">Offline photo search for screenshots and photos mounted into /data/photos</text>
+
+  <rect x="70" y="170" width="260" height="120" rx="18" fill="#FFF2CC" stroke="#D6B656" stroke-width="2"/>
+  <text x="92" y="212" fill="#3B2F0B" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Host photo folder</text>
+  <text x="92" y="244" fill="#5C4A16" font-family="Segoe UI, Arial, sans-serif" font-size="18">Windows screenshots folder</text>
+  <text x="92" y="272" fill="#5C4A16" font-family="Segoe UI, Arial, sans-serif" font-size="18">mounted as /data/photos</text>
+
+  <rect x="70" y="370" width="260" height="140" rx="18" fill="#E6F4EA" stroke="#67A36B" stroke-width="2"/>
+  <text x="92" y="412" fill="#17361B" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Indexer</text>
+  <text x="92" y="444" fill="#27492B" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/indexer.py</text>
+  <text x="92" y="472" fill="#27492B" font-family="Segoe UI, Arial, sans-serif" font-size="18">watchdog + 5 min scan</text>
+  <text x="92" y="500" fill="#27492B" font-family="Segoe UI, Arial, sans-serif" font-size="18">queue + multi-thread workers</text>
+
+  <rect x="70" y="580" width="260" height="172" rx="18" fill="#E7F0FF" stroke="#6D8FD6" stroke-width="2"/>
+  <text x="92" y="622" fill="#132A52" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Processing steps</text>
+  <text x="92" y="654" fill="#25406B" font-family="Segoe UI, Arial, sans-serif" font-size="18">1. file hash + stat cache</text>
+  <text x="92" y="682" fill="#25406B" font-family="Segoe UI, Arial, sans-serif" font-size="18">2. thumbnail JPEG</text>
+  <text x="92" y="710" fill="#25406B" font-family="Segoe UI, Arial, sans-serif" font-size="18">3. EXIF date and GPS</text>
+  <text x="92" y="738" fill="#25406B" font-family="Segoe UI, Arial, sans-serif" font-size="18">4. reverse geocode</text>
+
+  <rect x="410" y="170" width="290" height="180" rx="18" fill="#FDEBEC" stroke="#D9828A" stroke-width="2"/>
+  <text x="432" y="212" fill="#5C1E26" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">FastAPI app</text>
+  <text x="432" y="244" fill="#7A3038" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/main.py</text>
+  <text x="432" y="272" fill="#7A3038" font-family="Segoe UI, Arial, sans-serif" font-size="18">/ search UI and HTMX fragments</text>
+  <text x="432" y="300" fill="#7A3038" font-family="Segoe UI, Arial, sans-serif" font-size="18">/status and /gallery endpoints</text>
+  <text x="432" y="328" fill="#7A3038" font-family="Segoe UI, Arial, sans-serif" font-size="18">/thumb/{id} thumbnail serving</text>
+
+  <rect x="410" y="420" width="290" height="160" rx="18" fill="#EEF2FF" stroke="#7D8FE3" stroke-width="2"/>
+  <text x="432" y="462" fill="#22305F" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Search pipeline</text>
+  <text x="432" y="494" fill="#33447A" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/search.py</text>
+  <text x="432" y="522" fill="#33447A" font-family="Segoe UI, Arial, sans-serif" font-size="18">query text -> CLIP text embedding</text>
+  <text x="432" y="550" fill="#33447A" font-family="Segoe UI, Arial, sans-serif" font-size="18">sqlite-vec KNN + city/date filters</text>
+
+  <rect x="410" y="650" width="290" height="120" rx="18" fill="#F7F0FF" stroke="#A780D7" stroke-width="2"/>
+  <text x="432" y="692" fill="#4A2E6D" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Frontend templates</text>
+  <text x="432" y="724" fill="#65428A" font-family="Segoe UI, Arial, sans-serif" font-size="18">index.html + HTMX partials</text>
+  <text x="432" y="752" fill="#65428A" font-family="Segoe UI, Arial, sans-serif" font-size="18">gallery cards and split results UI</text>
+
+  <rect x="790" y="170" width="260" height="150" rx="18" fill="#FFF5E5" stroke="#D8A45C" stroke-width="2"/>
+  <text x="812" y="212" fill="#613E10" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">CLIP model</text>
+  <text x="812" y="244" fill="#7A531C" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/models.py</text>
+  <text x="812" y="272" fill="#7A531C" font-family="Segoe UI, Arial, sans-serif" font-size="18">ViT-B-32 image encoder</text>
+  <text x="812" y="300" fill="#7A531C" font-family="Segoe UI, Arial, sans-serif" font-size="18">shared text encoder</text>
+
+  <rect x="790" y="390" width="260" height="180" rx="18" fill="#E8F6F2" stroke="#5FA99C" stroke-width="2"/>
+  <text x="812" y="432" fill="#10473E" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">SQLite storage</text>
+  <text x="812" y="464" fill="#1E5E52" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/db.py</text>
+  <text x="812" y="492" fill="#1E5E52" font-family="Segoe UI, Arial, sans-serif" font-size="18">photos table metadata</text>
+  <text x="812" y="520" fill="#1E5E52" font-family="Segoe UI, Arial, sans-serif" font-size="18">vec_photos embeddings</text>
+  <text x="812" y="548" fill="#1E5E52" font-family="Segoe UI, Arial, sans-serif" font-size="18">WAL mode + indexes</text>
+
+  <rect x="790" y="640" width="260" height="130" rx="18" fill="#FFF0F4" stroke="#D1849B" stroke-width="2"/>
+  <text x="812" y="682" fill="#6A2338" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Thumbnail cache</text>
+  <text x="812" y="714" fill="#82374C" font-family="Segoe UI, Arial, sans-serif" font-size="18">app/cache/thumbnails</text>
+  <text x="812" y="742" fill="#82374C" font-family="Segoe UI, Arial, sans-serif" font-size="18">served by /thumb/{id}</text>
+
+  <rect x="1130" y="170" width="200" height="160" rx="18" fill="#EAF6FF" stroke="#6CA5CC" stroke-width="2"/>
+  <text x="1152" y="212" fill="#163E59" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Browser</text>
+  <text x="1152" y="244" fill="#27506A" font-family="Segoe UI, Arial, sans-serif" font-size="18">localhost:8000</text>
+  <text x="1152" y="272" fill="#27506A" font-family="Segoe UI, Arial, sans-serif" font-size="18">search form</text>
+  <text x="1152" y="300" fill="#27506A" font-family="Segoe UI, Arial, sans-serif" font-size="18">status and gallery</text>
+
+  <line x1="330" y1="230" x2="410" y2="230" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="410,230 394,222 394,238" fill="#7A7A7A"/>
+
+  <line x1="200" y1="290" x2="200" y2="370" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="200,370 192,354 208,354" fill="#7A7A7A"/>
+
+  <line x1="200" y1="510" x2="200" y2="580" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="200,580 192,564 208,564" fill="#7A7A7A"/>
+
+  <line x1="330" y1="440" x2="790" y2="440" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="790,440 774,432 774,448" fill="#7A7A7A"/>
+  <text x="472" y="426" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="16">metadata and embeddings</text>
+
+  <line x1="330" y1="664" x2="790" y2="664" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="790,664 774,656 774,672" fill="#7A7A7A"/>
+  <text x="498" y="650" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="16">thumbnail files</text>
+
+  <line x1="700" y1="500" x2="790" y2="500" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="790,500 774,492 774,508" fill="#7A7A7A"/>
+
+  <line x1="700" y1="260" x2="790" y2="260" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="790,260 774,252 774,268" fill="#7A7A7A"/>
+
+  <line x1="1050" y1="250" x2="1130" y2="250" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="1130,250 1114,242 1114,258" fill="#7A7A7A"/>
+  <text x="1064" y="236" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="16">HTML fragments</text>
+
+  <line x1="1130" y1="292" x2="700" y2="292" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="700,292 716,284 716,300" fill="#7A7A7A"/>
+  <text x="869" y="280" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="16">HTMX requests</text>
+
+  <line x1="920" y1="320" x2="920" y2="390" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="920,390 912,374 928,374" fill="#7A7A7A"/>
+
+  <line x1="920" y1="570" x2="920" y2="640" stroke="#7A7A7A" stroke-width="3"/>
+  <polygon points="920,640 912,624 928,624" fill="#7A7A7A"/>
+
+  <text x="70" y="826" fill="#5B6472" font-family="Segoe UI, Arial, sans-serif" font-size="18">Key idea: the app keeps a local SQLite index of thumbnails, metadata, and CLIP embeddings, then serves search and gallery views without sending photos to external services.</text>
+</svg>
