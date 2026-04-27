@@ -45,10 +45,17 @@ def search(
     merged: list[dict] = []
     seen_ids: set[int] = set()
 
-    for result in ocr_results:
-        result["rank_score"] = 1.0
-        merged.append(result)
-        seen_ids.add(result["id"])
+    # Normalize BM25 scores (negative, more negative = better) to [0.6, 1.0].
+    # This lets strong CLIP matches (≥0.65) beat weak OCR matches.
+    if ocr_results:
+        best_bm25 = min(r["ocr_rank"] for r in ocr_results)  # most negative = best
+        worst_bm25 = max(r["ocr_rank"] for r in ocr_results)
+        bm25_spread = max(abs(best_bm25 - worst_bm25), 1e-9)
+        for result in ocr_results:
+            normalized = (result["ocr_rank"] - worst_bm25) / bm25_spread  # 0=worst, 1=best
+            result["rank_score"] = 0.6 + 0.4 * normalized
+            merged.append(result)
+            seen_ids.add(result["id"])
 
     for index, result in enumerate(clip_results):
         result["match_reason"] = result.get("match_reason") or "clip"
