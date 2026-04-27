@@ -25,6 +25,20 @@
     color: #666;
     font-size: 0.78rem;
     margin-bottom: 0.75rem;
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .gallery-page-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.16rem 0.42rem;
+    border-radius: 999px;
+    border: 1px solid #2a2a2a;
+    color: #9ca9c6;
+    background: #171717;
   }
 
   .gallery-pager {
@@ -39,6 +53,8 @@
   }
 </style>
 
+{% set total_pages = ((total - 1) // limit) + 1 if total else 1 %}
+
 <form
   class="gallery-toolbar"
   hx-get="/gallery"
@@ -46,8 +62,15 @@
   hx-swap="innerHTML"
   hx-trigger="change"
 >
-  <input type="hidden" name="limit" value="{{ limit }}">
   <input type="hidden" name="page" value="1">
+  <select name="limit">
+    <option value="12" {% if limit == 12 %}selected{% endif %}>12개씩</option>
+    <option value="24" {% if limit == 24 %}selected{% endif %}>24개씩</option>
+    <option value="36" {% if limit == 36 %}selected{% endif %}>36개씩</option>
+    <option value="60" {% if limit == 60 %}selected{% endif %}>60개씩</option>
+    <option value="96" {% if limit == 96 %}selected{% endif %}>96개씩</option>
+    <option value="120" {% if limit == 120 %}selected{% endif %}>120개씩</option>
+  </select>
   <select name="sort">
     <option value="recent" {% if sort == "recent" %}selected{% endif %}>최신순</option>
     <option value="oldest" {% if sort == "oldest" %}selected{% endif %}>오래된순</option>
@@ -69,7 +92,8 @@
   </p>
 {% else %}
   <div class="gallery-meta">
-    {{ total }}개 중 {{ ((page - 1) * limit) + 1 }}-{{ ((page - 1) * limit) + (photos|length) }}개 표시
+    <span>{{ total }}개 중 {{ ((page - 1) * limit) + 1 }}-{{ ((page - 1) * limit) + (photos|length) }}개 표시</span>
+    <span class="gallery-page-chip">{{ page }} / {{ total_pages }} 페이지</span>
   </div>
   {% include "_photo_cards.html" %}
 
