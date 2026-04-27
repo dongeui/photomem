@@ -12,3 +12,4 @@ reverse-geocoder==1.5.1
 sqlite-vec==0.1.6
 python-multipart==0.0.12
 pytesseract==0.3.13
+opencv-python-headless==4.10.0.84

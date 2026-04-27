@@ -125,6 +125,33 @@ def test_get_missing_ocr_paths(initialized_db):
     assert "/fake/missing-ocr.jpg" not in missing_after
 
 
+def test_update_and_load_face_count(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/face.jpg", "facehash")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+
+    assert not db.photo_has_face_data(conn, photo_id)
+    db.update_photo_faces(conn, photo_id, 2)
+    assert db.photo_has_face_data(conn, photo_id)
+
+    photos = db.list_photos(conn, limit=10)
+    matching = next(photo for photo in photos if photo["id"] == photo_id)
+    assert matching["face_count"] == 2
+
+
+def test_get_missing_face_paths(initialized_db):
+    conn = initialized_db
+    photo_id = db.upsert_photo(conn, "/fake/missing-face.jpg", "missingface")
+    db.update_photo_indexed(conn, photo_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+
+    missing_before = db.get_missing_face_paths(conn)
+    assert "/fake/missing-face.jpg" in missing_before
+
+    db.update_photo_faces(conn, photo_id, 1)
+    missing_after = db.get_missing_face_paths(conn)
+    assert "/fake/missing-face.jpg" not in missing_after
+
+
 def test_thumbnail_path_bucketing():
     # Ensure thumbnails spread across subdirs
     p1 = thumbnails.thumb_path(1)

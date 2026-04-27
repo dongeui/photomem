@@ -7,6 +7,11 @@ from app import db, models
 
 logger = logging.getLogger("photomem.search")
 
+FACE_HINTS = {
+    "face", "faces", "person", "people", "portrait", "selfie",
+    "얼굴", "사람", "인물", "셀카", "남자", "여자",
+}
+
 
 def search(
     query: str,
@@ -89,4 +94,21 @@ def search(
         merged_by_id[result["id"]] = result
         seen_ids.add(result["id"])
 
+    _apply_face_boost(cleaned, merged)
+    merged.sort(key=lambda item: item.get("rank_score", 0.0), reverse=True)
     return merged[:limit]
+
+
+def _apply_face_boost(query: str, results: list[dict]) -> None:
+    lowered = query.lower()
+    if not any(hint in lowered for hint in FACE_HINTS):
+        return
+
+    for result in results:
+        face_count = int(result.get("face_count") or 0)
+        if face_count > 0:
+            boost = min(0.25, 0.12 + (0.05 * min(face_count, 3)))
+            result["rank_score"] = min(1.0, float(result.get("rank_score", 0.0)) + boost)
+            result["face_match"] = True
+        else:
+            result["rank_score"] = max(0.0, float(result.get("rank_score", 0.0)) - 0.18)

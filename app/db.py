@@ -55,6 +55,12 @@ def init_db() -> None:
             updated_at   INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS photo_faces (
+            photo_id     INTEGER PRIMARY KEY,
+            face_count   INTEGER NOT NULL DEFAULT 0,
+            updated_at   INTEGER NOT NULL
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_photos
             USING vec0(embedding float[512]);
 
@@ -130,6 +136,14 @@ def photo_has_ocr(conn: sqlite3.Connection, photo_id: int) -> bool:
     return cur.fetchone() is not None
 
 
+def photo_has_face_data(conn: sqlite3.Connection, photo_id: int) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM photo_faces WHERE photo_id=?",
+        (photo_id,),
+    )
+    return cur.fetchone() is not None
+
+
 def get_missing_ocr_paths(conn: sqlite3.Connection) -> list[str]:
     cur = conn.execute(
         """
@@ -138,6 +152,19 @@ def get_missing_ocr_paths(conn: sqlite3.Connection) -> list[str]:
         LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
         WHERE p.status='indexed'
           AND (o.photo_id IS NULL OR o.text_content = '')
+        """
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def get_missing_face_paths(conn: sqlite3.Connection) -> list[str]:
+    cur = conn.execute(
+        """
+        SELECT p.file_path
+        FROM photos AS p
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        WHERE p.status='indexed'
+          AND f.photo_id IS NULL
         """
     )
     return [row[0] for row in cur.fetchall()]
@@ -232,6 +259,20 @@ def update_photo_ocr(conn: sqlite3.Connection, photo_id: int, text_content: str)
     conn.commit()
 
 
+def update_photo_faces(conn: sqlite3.Connection, photo_id: int, face_count: int) -> None:
+    now = int(time.time())
+    conn.execute(
+        """INSERT INTO photo_faces (photo_id, face_count, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(photo_id) DO UPDATE SET
+             face_count=excluded.face_count,
+             updated_at=excluded.updated_at
+        """,
+        (photo_id, max(0, int(face_count)), now),
+    )
+    conn.commit()
+
+
 def mark_photo_error(conn: sqlite3.Connection, photo_id: int, error: str) -> None:
     conn.execute(
         "UPDATE photos SET status='error', error_msg=? WHERE id=?",
@@ -261,9 +302,10 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 def list_photos(conn: sqlite3.Connection, limit: int = 120, offset: int = 0) -> list[dict]:
     cur = conn.execute(
         """SELECT p.id, p.file_path, p.created_at, p.city, p.country, p.status, p.error_msg,
-                  o.text_content AS ocr_text
+                  o.text_content AS ocr_text, COALESCE(f.face_count, 0) AS face_count
            FROM photos AS p
            LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+           LEFT JOIN photo_faces AS f ON f.photo_id = p.id
            WHERE p.status='indexed'
            ORDER BY COALESCE(p.created_at, p.indexed_at, 0) DESC, p.id DESC
            LIMIT ? OFFSET ?""",
@@ -313,9 +355,11 @@ def search_by_embedding(
 
     where_sql = " AND ".join(where_clauses)
     cur = conn.execute(
-        f"""SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text
+        f"""SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
+                   COALESCE(f.face_count, 0) AS face_count
             FROM photos AS p
             LEFT JOIN photo_ocr AS o ON o.photo_id = p.id
+            LEFT JOIN photo_faces AS f ON f.photo_id = p.id
             WHERE {where_sql}""",
         params,
     )
@@ -328,6 +372,7 @@ def search_by_embedding(
             "city":       row["city"],
             "country":    row["country"],
             "ocr_text":   row["ocr_text"],
+            "face_count": row["face_count"],
             "distance":   dist_map[row["id"]],
         }
         for row in rows
@@ -345,10 +390,11 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
     cur = conn.execute(
         """
         SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
-               bm25(photo_ocr_fts) AS rank
+               COALESCE(f.face_count, 0) AS face_count, bm25(photo_ocr_fts) AS rank
         FROM photo_ocr_fts
         JOIN photo_ocr AS o ON o.photo_id = photo_ocr_fts.photo_id
         JOIN photos AS p ON p.id = o.photo_id
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
         WHERE photo_ocr_fts MATCH ?
           AND p.status='indexed'
         ORDER BY rank
@@ -367,6 +413,7 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
                 "city": row["city"],
                 "country": row["country"],
                 "ocr_text": row["ocr_text"],
+                "face_count": row["face_count"],
                 "ocr_rank": float(row["rank"]),
                 "match_reason": "ocr",
                 "distance": None,

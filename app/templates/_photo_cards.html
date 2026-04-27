@@ -68,6 +68,11 @@
     color: #9dd5a8;
   }
 
+  .photo-badge-face {
+    background: #4a2c1e;
+    color: #f3c8a0;
+  }
+
   .photo-ocr {
     color: #8f8f8f;
     font-size: 0.68rem;
@@ -104,6 +109,9 @@
       {% endif %}
       {% if photo.match_reason == "clip" or photo.match_reason == "ocr+clip" %}
       <div class="photo-badge">Semantic</div>
+      {% endif %}
+      {% if photo.face_count %}
+      <div class="photo-badge photo-badge-face">Face {{ photo.face_count }}</div>
       {% endif %}
       {% if photo.ocr_text %}
       <div class="photo-ocr">{{ photo.ocr_text }}</div>

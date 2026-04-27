@@ -16,7 +16,7 @@ import piexif
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from app import db, geocoder, models, ocr, thumbnails
+from app import db, faces, geocoder, models, ocr, thumbnails
 
 logger = logging.getLogger("photomem.indexer")
 
@@ -146,15 +146,19 @@ async def _process_path(
     photo_id = db.upsert_photo(conn, path, file_hash, file_size, modified_at)
     if photo_id is None:
         existing_id = db.get_photo_id(conn, path)
-        if existing_id is not None and not db.photo_has_ocr(conn, existing_id):
+        if existing_id is not None:
             thumbnails.generate_thumbnail(existing_id, path)
-            ocr_text = ocr.extract_text(path)
-            db.update_photo_ocr(conn, existing_id, ocr_text)
+            if not db.photo_has_ocr(conn, existing_id):
+                ocr_text = ocr.extract_text(path)
+                db.update_photo_ocr(conn, existing_id, ocr_text)
+            if not db.photo_has_face_data(conn, existing_id):
+                db.update_photo_faces(conn, existing_id, faces.detect_faces(path))
         return
 
     thumbnails.generate_thumbnail(photo_id, path)
     ocr_text = ocr.extract_text(path)
     db.update_photo_ocr(conn, photo_id, ocr_text)
+    db.update_photo_faces(conn, photo_id, faces.detect_faces(path))
     created_at, lat, lon = _parse_exif(path)
 
     city = country = None
@@ -229,10 +233,15 @@ async def run_indexer() -> None:
         missing_ocr_paths = db.get_missing_ocr_paths(setup_conn)
         for path in missing_ocr_paths:
             _enqueue_path_nowait(path)
+        missing_face_paths = db.get_missing_face_paths(setup_conn)
+        for path in missing_face_paths:
+            _enqueue_path_nowait(path)
         if pending_count:
             logger.info("Re-queued %d pending photos from previous run", pending_count)
         if missing_ocr_paths:
             logger.info("Queued %d indexed photo(s) for OCR backfill", len(missing_ocr_paths))
+        if missing_face_paths:
+            logger.info("Queued %d indexed photo(s) for face backfill", len(missing_face_paths))
     finally:
         setup_conn.close()
 
