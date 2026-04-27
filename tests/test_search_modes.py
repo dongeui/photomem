@@ -22,7 +22,7 @@ def test_search_ocr_mode_skips_clip(monkeypatch):
     monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
     monkeypatch.setattr(search.models, "encode_text", lambda _query: b"ignored")
 
-    results = search.search("동의", mode="ocr", limit=5)
+    results = search.search("\uB3D9\uC758", mode="ocr", limit=5)
 
     assert len(results) == 1
     assert calls["ocr"] == 1
@@ -51,7 +51,7 @@ def test_search_semantic_mode_skips_ocr(monkeypatch):
     monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
     monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
 
-    results = search.search("남자 얼굴", mode="semantic", limit=5)
+    results = search.search("\uB0A8\uC790 \uC5BC\uAD74", mode="semantic", limit=5)
 
     assert len(results) == 1
     assert calls["ocr"] == 0
@@ -69,7 +69,7 @@ def test_search_hybrid_merges_ocr_and_clip(monkeypatch):
         search.db,
         "search_by_ocr",
         lambda _conn, _query, limit=20: [
-            {"id": 1, "ocr_rank": -5.0, "ocr_text": "verified", "match_reason": "ocr"},
+            {"id": 1, "ocr_rank": -5.0, "ocr_text": "verified", "match_reason": "ocr", "ocr_match_kind": "word"},
         ],
     )
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_face_hint_query_boosts_face_results(monkeypatch):
     )
     monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
 
-    results = search.search("남자 얼굴", mode="semantic", limit=5)
+    results = search.search("\uB0A8\uC790 \uC5BC\uAD74", mode="semantic", limit=5)
 
     assert results[0]["id"] == 2
     assert results[0]["face_match"] is True
@@ -128,7 +128,8 @@ def test_exact_ocr_match_boosts_text_result(monkeypatch):
             {
                 "id": 3,
                 "ocr_rank": -5.0,
-                "ocr_text": "전송 실패 오류코드 T001",
+                "ocr_text": "\uC804\uC1A1 \uC2E4\uD328 \uC624\uB958\uCF54\uB4DC T001",
+                "ocr_match_kind": "word",
                 "text_char_count": 12,
                 "text_line_count": 1,
                 "is_text_heavy": 1,
@@ -140,8 +141,27 @@ def test_exact_ocr_match_boosts_text_result(monkeypatch):
     monkeypatch.setattr(search.db, "search_by_embedding", lambda *args, **kwargs: [])
     monkeypatch.setattr(search.models, "encode_text", lambda _query: b"embedding")
 
-    results = search.search("전송 실패", mode="ocr", limit=5)
+    results = search.search("\uC804\uC1A1 \uC2E4\uD328", mode="ocr", limit=5)
 
     assert results[0]["ocr_exact_match"] is True
-    assert "전송 실패" in results[0]["ocr_excerpt"]
+    assert "\uC804\uC1A1 \uC2E4\uD328" in results[0]["ocr_excerpt"]
     assert results[0]["rank_score"] > 0.9
+
+
+def test_ocr_word_match_beats_phrase_match(initialized_db):
+    from app import db as real_db
+
+    conn = initialized_db
+    first_id = real_db.upsert_photo(conn, "/fake/word-hit.png", "wordhit")
+    second_id = real_db.upsert_photo(conn, "/fake/phrase-hit.png", "phrasehit")
+    real_db.update_photo_indexed(conn, first_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    real_db.update_photo_indexed(conn, second_id, 1, None, None, None, None, b"\x00" * 512 * 4)
+    real_db.update_photo_ocr(conn, first_id, "\uB3D9\uC758 \uD544\uC694\uD569\uB2C8\uB2E4")
+    real_db.update_photo_ocr(conn, second_id, "\uC815\uB3D9\uC758\uC778 \uD14C\uC2A4\uD2B8")
+
+    results = real_db.search_by_ocr(conn, "\uB3D9\uC758", limit=50)
+
+    by_id = {result["id"]: result for result in results}
+    assert by_id[first_id]["ocr_match_kind"] == "word"
+    assert by_id[second_id]["ocr_match_kind"] == "phrase"
+    assert results.index(by_id[first_id]) < results.index(by_id[second_id])

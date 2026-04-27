@@ -70,6 +70,7 @@ def search(
             else:
                 normalized = (worst_bm25 - result["ocr_rank"]) / bm25_spread
                 result["rank_score"] = 0.6 + 0.4 * normalized
+            result["rank_score"] = min(1.0, result["rank_score"] + _ocr_match_boost(result.get("ocr_match_kind")))
             result["match_reason"] = result.get("match_reason") or "ocr"
             merged.append(result)
             seen_ids.add(result["id"])
@@ -115,6 +116,16 @@ def _apply_exact_ocr_boost(query: str, results: list[dict]) -> None:
             result["ocr_exact_match"] = True
         elif tokens and all(token in ocr_lower for token in tokens):
             result["rank_score"] = min(1.0, float(result.get("rank_score", 0.0)) + 0.12)
+
+
+def _ocr_match_boost(match_kind: str | None) -> float:
+    if match_kind == "word":
+        return 0.22
+    if match_kind == "phrase":
+        return 0.12
+    if match_kind == "tokens":
+        return 0.04
+    return 0.0
 
 
 def _apply_face_boost(query: str, results: list[dict]) -> None:

@@ -1,6 +1,7 @@
 import asyncio
 import html as html_module
 import logging
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -254,6 +255,26 @@ async def thumbnail(photo_id: int):
     buf = io.BytesIO()
     PilImage.new("RGB", (1, 1), color=(40, 40, 40)).save(buf, "JPEG")
     return Response(content=buf.getvalue(), media_type="image/jpeg")
+
+
+@app.get("/photo/{photo_id}")
+async def original_photo(photo_id: int):
+    conn = db.get_connection()
+    try:
+        cur = conn.execute("SELECT file_path FROM photos WHERE id=?", (photo_id,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return Response(status_code=404)
+
+    path = Path(row["file_path"])
+    if not path.exists():
+        return Response(status_code=404)
+
+    media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    return FileResponse(str(path), media_type=media_type, filename=path.name)
 
 
 # ── data endpoints ────────────────────────────────────────────────────────────

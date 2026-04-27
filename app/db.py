@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -500,6 +501,7 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
         return []
 
     term = cleaned.replace('"', '""')
+    fetch_limit = max(limit * 5, 40)
     cur = conn.execute(
         """
         SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
@@ -522,33 +524,45 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
         ORDER BY rank
         LIMIT ?
         """,
-        (f'"{term}" OR "{term}"*', limit),
+        (f'"{term}" OR "{term}"*', fetch_limit),
     )
     rows = cur.fetchall()
+
+    like_cur = conn.execute(
+        """
+        SELECT p.id, p.file_path, p.created_at, p.city, p.country, o.text_content AS ocr_text,
+               COALESCE(f.face_count, 0) AS face_count,
+               COALESCE(a.text_char_count, 0) AS text_char_count,
+               COALESCE(a.text_line_count, 0) AS text_line_count,
+               COALESCE(a.edge_density, 0) AS edge_density,
+               COALESCE(a.brightness, 0) AS brightness,
+               COALESCE(a.is_text_heavy, 0) AS is_text_heavy,
+               COALESCE(a.is_document_like, 0) AS is_document_like,
+               COALESCE(a.is_screenshot_like, 0) AS is_screenshot_like
+        FROM photo_ocr AS o
+        JOIN photos AS p ON p.id = o.photo_id
+        LEFT JOIN photo_faces AS f ON f.photo_id = p.id
+        LEFT JOIN photo_analysis AS a ON a.photo_id = p.id
+        WHERE p.status='indexed'
+          AND o.text_content LIKE ?
+        LIMIT ?
+        """,
+        (f"%{cleaned}%", fetch_limit),
+    )
+    rows.extend(like_cur.fetchall())
+
     results = []
+    seen_ids: set[int] = set()
     for row in rows:
-        results.append(
-            {
-                "id": row["id"],
-                "file_path": row["file_path"],
-                "created_at": row["created_at"],
-                "city": row["city"],
-                "country": row["country"],
-                "ocr_text": row["ocr_text"],
-                "face_count": row["face_count"],
-                "text_char_count": row["text_char_count"],
-                "text_line_count": row["text_line_count"],
-                "edge_density": row["edge_density"],
-                "brightness": row["brightness"],
-                "is_text_heavy": row["is_text_heavy"],
-                "is_document_like": row["is_document_like"],
-                "is_screenshot_like": row["is_screenshot_like"],
-                "ocr_rank": float(row["rank"]),
-                "match_reason": "ocr",
-                "distance": None,
-            }
-        )
-    return results
+        if row["id"] in seen_ids:
+            continue
+        match_kind = _ocr_match_kind(cleaned, row["ocr_text"] or "")
+        if match_kind is None:
+            continue
+        seen_ids.add(row["id"])
+        results.append(_ocr_row_to_result(row, match_kind))
+    results.sort(key=lambda item: (_ocr_match_priority(item["ocr_match_kind"]), item["ocr_rank"]))
+    return results[:limit]
 
 
 def _gallery_order_clause(sort: str) -> str:
@@ -575,3 +589,56 @@ def _photo_filter_clause(filter_tag: str) -> tuple[str, list]:
         where_clauses.append("COALESCE(a.is_screenshot_like, 0) = 1")
 
     return " AND ".join(where_clauses), params
+
+
+def _ocr_row_to_result(row: sqlite3.Row, match_kind: str) -> dict:
+    return {
+        "id": row["id"],
+        "file_path": row["file_path"],
+        "created_at": row["created_at"],
+        "city": row["city"],
+        "country": row["country"],
+        "ocr_text": row["ocr_text"],
+        "face_count": row["face_count"],
+        "text_char_count": row["text_char_count"],
+        "text_line_count": row["text_line_count"],
+        "edge_density": row["edge_density"],
+        "brightness": row["brightness"],
+        "is_text_heavy": row["is_text_heavy"],
+        "is_document_like": row["is_document_like"],
+        "is_screenshot_like": row["is_screenshot_like"],
+        "ocr_match_kind": match_kind,
+        "ocr_rank": float(row["rank"]) if "rank" in row.keys() else 0.0,
+        "match_reason": "ocr",
+        "distance": None,
+    }
+
+
+def _ocr_match_kind(query: str, text: str) -> str | None:
+    normalized_query = query.casefold().strip()
+    normalized_text = text.casefold()
+    if not normalized_query or not normalized_text:
+        return None
+
+    if _contains_word_boundary(normalized_text, normalized_query):
+        return "word"
+    if normalized_query in normalized_text:
+        return "phrase"
+
+    tokens = [token for token in re.split(r"\s+", normalized_query) if token]
+    if tokens and all(token in normalized_text for token in tokens):
+        return "tokens"
+    return None
+
+
+def _contains_word_boundary(text: str, query: str) -> bool:
+    pattern = rf"(?<![0-9a-zA-Z가-힣]){re.escape(query)}(?![0-9a-zA-Z가-힣])"
+    return re.search(pattern, text) is not None
+
+
+def _ocr_match_priority(match_kind: str) -> int:
+    if match_kind == "word":
+        return 0
+    if match_kind == "phrase":
+        return 1
+    return 2

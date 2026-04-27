@@ -12,6 +12,15 @@
     background: #171717;
   }
 
+  .photo-thumb {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: zoom-in;
+  }
+
   .photo-card img {
     width: 100%;
     aspect-ratio: 4 / 3;
@@ -93,17 +102,78 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+
+  .photo-lightbox[hidden] {
+    display: none;
+  }
+
+  .photo-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.88);
+    z-index: 1000;
+    padding: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .photo-lightbox-frame {
+    max-width: min(96vw, 1400px);
+    max-height: 92vh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  .photo-lightbox-top {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .photo-lightbox-close {
+    border: 1px solid #3a3a3a;
+    background: #181818;
+    color: #d8d8d8;
+    border-radius: 8px;
+    padding: 0.45rem 0.7rem;
+    cursor: pointer;
+  }
+
+  .photo-lightbox-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #111;
+    border-radius: 8px;
+  }
+
+  .photo-lightbox-meta {
+    color: #9b9b9b;
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+  }
 </style>
 
 <div class="photo-grid">
   {% for photo in photos %}
   <article class="photo-card" title="{{ photo.file_path }}">
-    <img
-      src="/thumb/{{ photo.id }}"
-      alt=""
-      loading="lazy"
-      decoding="async"
+    <button
+      class="photo-thumb"
+      type="button"
+      data-photo-open
+      data-full-src="/photo/{{ photo.id }}"
+      data-photo-path="{{ photo.file_path }}"
+      data-photo-date="{% if photo.created_at %}{{ photo.created_at | int | strftime }}{% endif %}"
     >
+      <img
+        src="/thumb/{{ photo.id }}"
+        alt=""
+        loading="lazy"
+        decoding="async"
+      >
+    </button>
     <div class="photo-card-body">
       <div class="photo-date">
         {% if photo.created_at %}{{ photo.created_at | int | strftime }}{% else %}날짜 없음{% endif %}
@@ -140,3 +210,49 @@
   </article>
   {% endfor %}
 </div>
+
+<div class="photo-lightbox" id="photo-lightbox" hidden>
+  <div class="photo-lightbox-frame">
+    <div class="photo-lightbox-top">
+      <button type="button" class="photo-lightbox-close" data-photo-close>닫기</button>
+    </div>
+    <img class="photo-lightbox-image" id="photo-lightbox-image" alt="">
+    <div class="photo-lightbox-meta" id="photo-lightbox-meta"></div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    if (window.__photomemLightboxInit) return;
+    window.__photomemLightboxInit = true;
+
+    const lightbox = document.getElementById("photo-lightbox");
+    const image = document.getElementById("photo-lightbox-image");
+    const meta = document.getElementById("photo-lightbox-meta");
+
+    document.addEventListener("click", (event) => {
+      const opener = event.target.closest("[data-photo-open]");
+      if (opener) {
+        image.src = opener.dataset.fullSrc;
+        meta.textContent = [opener.dataset.photoDate, opener.dataset.photoPath].filter(Boolean).join(" · ");
+        lightbox.hidden = false;
+        document.body.style.overflow = "hidden";
+        return;
+      }
+
+      if (event.target === lightbox || event.target.closest("[data-photo-close]")) {
+        lightbox.hidden = true;
+        image.removeAttribute("src");
+        document.body.style.overflow = "";
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && lightbox && !lightbox.hidden) {
+        lightbox.hidden = true;
+        image.removeAttribute("src");
+        document.body.style.overflow = "";
+      }
+    });
+  })();
+</script>
