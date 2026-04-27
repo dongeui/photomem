@@ -62,6 +62,93 @@ def test_hybrid_auto_routes_to_ocr_on_strong_word_hits(monkeypatch):
     assert calls["clip"] == 0
 
 
+def test_hybrid_auto_routes_face_queries_to_semantic(monkeypatch):
+    calls = {"clip": 0}
+
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(
+        search.db,
+        "search_by_ocr",
+        lambda _conn, _query, limit=20: [
+            {"id": 1, "ocr_rank": -5.0, "ocr_text": "\ub0a8\uc790 \uc5bc\uad74", "ocr_match_kind": "word", "match_reason": "ocr"},
+        ],
+    )
+
+    def fake_clip(*args, **kwargs):
+        calls["clip"] += 1
+        return [{"id": 2, "distance": 0.2, "face_count": 1}]
+
+    monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"ignored")
+
+    results, meta = search.search_with_meta("\ub0a8\uc790 \uc5bc\uad74", mode="hybrid", limit=5)
+
+    assert meta["effective_mode"] == "semantic"
+    assert meta["intent_reason"] == "auto-face"
+    assert calls["clip"] == 1
+    assert results[0]["id"] == 2
+    assert results[0]["match_reason"] == "clip"
+
+
+def test_hybrid_keeps_mixed_queries_in_hybrid(monkeypatch):
+    calls = {"clip": 0}
+
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(
+        search.db,
+        "search_by_ocr",
+        lambda _conn, _query, limit=20: [
+            {"id": 1, "ocr_rank": -5.0, "ocr_text": "\ub0a8\uc790 \uba54\uc2dc\uc9c0", "ocr_match_kind": "word", "match_reason": "ocr"},
+        ],
+    )
+
+    def fake_clip(*args, **kwargs):
+        calls["clip"] += 1
+        return [{"id": 2, "distance": 0.25, "face_count": 1}]
+
+    monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"ignored")
+
+    _results, meta = search.search_with_meta("\ub0a8\uc790 \uba54\uc2dc\uc9c0", mode="hybrid", limit=5)
+
+    assert meta["effective_mode"] == "hybrid"
+    assert meta["intent_reason"] == "auto-mixed"
+    assert calls["clip"] == 1
+
+
+def test_hybrid_auto_routes_code_queries_to_ocr(monkeypatch):
+    calls = {"clip": 0}
+
+    class DummyConn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(search.db, "get_connection", lambda: DummyConn())
+    monkeypatch.setattr(search.db, "search_by_ocr", lambda _conn, _query, limit=20: [])
+
+    def fake_clip(*args, **kwargs):
+        calls["clip"] += 1
+        return []
+
+    monkeypatch.setattr(search.db, "search_by_embedding", fake_clip)
+    monkeypatch.setattr(search.models, "encode_text", lambda _query: b"ignored")
+
+    results, meta = search.search_with_meta("T001", mode="hybrid", limit=5)
+
+    assert results == []
+    assert meta["effective_mode"] == "ocr"
+    assert meta["intent_reason"] == "auto-code"
+    assert calls["clip"] == 0
+
+
 def test_search_semantic_mode_skips_ocr(monkeypatch):
     calls = {"ocr": 0, "clip": 0}
 

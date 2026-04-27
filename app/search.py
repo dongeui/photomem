@@ -15,7 +15,7 @@ TEXT_HINTS = {
     "text", "ocr", "document", "receipt", "error", "dialog", "message", "screen",
     "텍스트", "글씨", "문서", "영수증", "오류", "대화", "메시지", "화면",
 }
-SCREEN_HINTS = {"screenshot", "screen", "ui", "스크린샷", "화면", "앱"}
+SCREEN_HINTS = {"screenshot", "screen", "ui", "chat", "popup", "스크린샷", "화면", "앱", "대화창", "팝업"}
 
 
 def search(
@@ -81,7 +81,7 @@ def search_with_meta(
     seen_ids: set[int] = set()
     merged_by_id: dict[int, dict] = {}
 
-    if ocr_results:
+    if effective_mode in {"hybrid", "ocr"} and ocr_results:
         best_bm25 = min(r["ocr_rank"] for r in ocr_results)
         worst_bm25 = max(r["ocr_rank"] for r in ocr_results)
         bm25_spread = worst_bm25 - best_bm25
@@ -117,7 +117,7 @@ def search_with_meta(
 
     _apply_exact_ocr_boost(cleaned, merged)
     _apply_face_boost(cleaned, merged)
-    _apply_analysis_boost(cleaned, normalized_mode, merged)
+    _apply_analysis_boost(cleaned, effective_mode, merged)
     _set_ocr_excerpt(cleaned, merged)
     merged.sort(key=lambda item: item.get("rank_score", 0.0), reverse=True)
     return merged[:limit], {"effective_mode": effective_mode, "intent_reason": intent_reason}
@@ -217,14 +217,26 @@ def _resolve_effective_mode(query: str, requested_mode: str, ocr_results: list[d
         return requested_mode, "manual"
 
     lowered = query.casefold()
-    if any(hint in lowered for hint in FACE_HINTS):
-        return "hybrid", "visual-hint"
+    has_face_hint = any(hint in lowered for hint in FACE_HINTS)
+    has_text_hint = any(hint in lowered for hint in TEXT_HINTS)
+    has_screen_hint = any(hint in lowered for hint in SCREEN_HINTS)
 
     word_hits = [result for result in ocr_results if result.get("ocr_match_kind") == "word"]
     phrase_hits = [result for result in ocr_results if result.get("ocr_match_kind") == "phrase"]
     has_code_like_text = any(ch.isdigit() for ch in query) or any(ch in query for ch in "-_:/[]()#")
+    is_short_query = len(query.strip()) <= 12
 
-    if word_hits and (len(query.strip()) <= 12 or len(word_hits) >= 2 or has_code_like_text):
+    if has_face_hint and (has_text_hint or has_screen_hint or has_code_like_text):
+        return "hybrid", "auto-mixed"
+    if has_face_hint:
+        return "semantic", "auto-face"
+    if has_text_hint and not ocr_results:
+        return "ocr", "auto-text-hint"
+    if has_screen_hint and (word_hits or phrase_hits or is_short_query):
+        return "ocr", "auto-screen-text"
+    if has_code_like_text:
+        return "ocr", "auto-code"
+    if word_hits and (is_short_query or len(word_hits) >= 2 or has_code_like_text):
         return "ocr", "auto-word-match"
     if phrase_hits and has_code_like_text:
         return "ocr", "auto-phrase-code"
