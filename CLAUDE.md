@@ -5,8 +5,8 @@
 - `photomem` is an offline screenshot/photo search app.
 - Host screenshots are mounted into `/data/photos` through Docker.
 - FastAPI serves the UI at `http://localhost:8000`.
-- Search is CLIP text-to-image semantic search, not face detection or OCR-only filtering.
-- The app keeps a local SQLite index with metadata in `photos` and embeddings in `vec_photos`.
+- Search is now a hybrid of OCR, CLIP semantic search, shadow-document FTS, and lightweight analysis tags.
+- The app keeps a local SQLite index with metadata in `photos`, embeddings in `vec_photos`, OCR text in `photo_ocr`, OCR blocks in `photo_ocr_blocks`, short Korean grams in `photo_ocr_grams`, and merged search docs in `photo_search_docs`.
 - Thumbnails are cached under `/app/cache/thumbnails` and shown in both search results and gallery.
 
 ### Main runtime flow
@@ -14,8 +14,8 @@
 1. `app/main.py` starts FastAPI, validates the photo mount, initializes SQLite, and loads the CLIP model.
 2. `app/indexer.py` starts watchdog plus a periodic scan every `PHOTOMEM_SCAN_INTERVAL` seconds.
 3. New or changed files are queued for indexing.
-4. Each worker hashes the file, updates DB state, generates a thumbnail, reads EXIF date and GPS, reverse-geocodes location, then writes the CLIP image embedding.
-5. `app/search.py` encodes search text with the CLIP text encoder and runs KNN search through `sqlite-vec`.
+4. Each worker hashes the file, updates DB state, generates a thumbnail, extracts OCR text plus OCR blocks, computes face count and analysis tags, reads EXIF date and GPS, reverse-geocodes location, then writes the CLIP image embedding.
+5. `app/search.py` routes intent across `ocr`, `semantic`, or `hybrid`, expands Korean CLIP queries with English variants, then fuses OCR, CLIP, shadow-doc, and analysis ranks with RRF.
 
 ### Current implemented features
 
@@ -24,36 +24,43 @@
 - 5-minute folder rescans for new or changed screenshots
 - Cached file stat tracking using `file_size` and `modified_at`
 - Thumbnail gallery endpoint at `/gallery`
-- OCR-backed text search (Tesseract kor+eng); BM25-normalized score [0.6, 1.0]
-- CLIP results scored by L2→cosine distance, capped at 0.65
-- `ocr+clip` combined hits score 1.0 (both signals agree)
+- OCR-backed text search with FTS5, substring fallback, and 2-gram support for short Korean UI terms
+- OCR engine abstraction: `tesseract` default, optional `easyocr` and `paddleocr`
+- OCR block persistence for word/line boxes and confidence
+- Korean-to-English query expansion for CLIP through built-in lexicon, with optional `opus` translator path
+- CLIP, OCR, shadow-doc, and analysis ranking fused with RRF
 - Split search UI: gap-based dynamic split (largest score drop wins)
 - City autocomplete via `/cities` datalist loaded on page load
+- Result cards include match explanations such as exact OCR hit, semantic expansion, or structural match
+- Search mode auto-routing across `hybrid`, `ocr`, and `semantic`
 
 ### Important files
 
 - `app/main.py`: routes, startup, search result grouping, HTMX fragments, `_gap_split`
 - `app/indexer.py`: watcher, queue, workers, rescan loop
-- `app/db.py`: schema, migrations, stats, list/search queries, incremental FTS
+- `app/db.py`: schema, migrations, OCR blocks/grams/search-docs, list/search queries, incremental FTS
 - `app/models.py`: shared CLIP model loading and text/image encoding
-- `app/search.py`: merged OCR + CLIP search with BM25/distance scoring
-- `app/ocr.py`: Tesseract wrapper with image prep
+- `app/search.py`: intent routing, query expansion, RRF fusion, match explanations
+- `app/ocr.py`: OCR engine abstraction and structured OCR extraction
+- `app/query_translate.py`: Korean CLIP query expansion and optional translator hook
 - `app/templates/`: HTMX partials and card UI
 - `docs/system-structure.svg`: one-page system diagram
+- `docs/search-quality-plan.md`: current search quality roadmap and status
 
 ### Known limits and next work ideas
 
-- Search relevance is CLIP-only for image content. "Male face" = semantic guess, not face classification.
-- No date-range pre-filter in the CLIP KNN step — all candidates fetched then filtered in Python.
-- Gallery has no pagination — limited to 120 photos.
-- No sort options (by date / by relevance) in the gallery view.
-- Exact people/face filtering needs a separate face/person pipeline (detection + tagging/embeddings).
+- CLIP image indexing is still monolingual at the embedding level; current Korean support relies on query-time expansion rather than multilingual image re-embedding.
+- OCR engine abstraction exists, but production default is still `tesseract` until a benchmark picks a better engine.
+- Search cards now explain why they matched, but the "strong match vs candidate" visual split still needs a fuller UX pass.
+- No translated image captions yet; shadow documents currently combine OCR and tags only.
+- Exact person identity or face embedding search is still out of scope; current face support is count-based.
 
 ### Local run assumptions
 
 - Docker is the primary run path.
 - `.env` is expected to point `PHOTOMEM_HOST_PHOTOS` at the Windows screenshots folder.
 - Current compose settings use `PHOTOMEM_INDEX_WORKERS=4` and `PHOTOMEM_SCAN_INTERVAL=300`.
+- OCR benchmarking is done with `scripts/benchmark_ocr.py`.
 
 
 ## Project context
@@ -63,10 +70,10 @@ This is **photomem** — a private photo service with multilingual NL search (Ko
 **Read `DESIGN.md` before writing any code.** The `GSTACK REVIEW REPORT` section at the bottom has the final architecture, 7 confirmed decisions (D2–D7), and 5 must-fix items for Sprint 1.
 
 Key facts:
-- Stack: Python + FastAPI + HTMX + ONNX Runtime (CLIP ViT-B/32) + sqlite-vec + SQLite WAL + Docker
-- LLM/ollama is NOT Phase 1. Pure CLIP pipeline only.
-- ProcessPoolExecutor workers must load ONNX model via `initializer=_worker_init` — not picklable
-- Default `PHOTOMEM_MAX_WORKERS=1` for NAS memory constraints
+- Stack: Python + FastAPI + HTMX + open_clip + sqlite-vec + SQLite WAL + Docker
+- Current search stack: OCR FTS + CLIP semantic retrieval + shadow docs + RRF fusion
+- Translation path: built-in Korean lexicon by default, optional `opus` local translator
+- Current worker model: thread-based CLIP encoding via `PHOTOMEM_INDEX_WORKERS`
 - Distribution: `docker compose up` (primary), brew tap (v1.1+)
 
 ## Skill routing
