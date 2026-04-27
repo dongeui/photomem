@@ -132,7 +132,7 @@
       hx-get="/search"
       hx-target="#results"
       hx-indicator="#search-indicator"
-      hx-trigger="submit, keyup changed delay:400ms from:#search-input"
+      hx-trigger="submit, keyup changed delay:400ms from:#search-input, change from:[name=mode]"
     >
       <div class="search-row">
         <input

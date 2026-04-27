@@ -6,7 +6,7 @@
 {% elif not results %}
   <p style="color:#555; font-size:0.9rem; padding-top:1rem;">
     {% if query %}
-      "{{ query }}"에 해당하는 사진을 찾지 못했습니다.
+      "{{ query | e }}"에 해당하는 사진을 찾지 못했습니다.
     {% else %}
       검색어를 입력해 주세요.
     {% endif %}
@@ -63,7 +63,7 @@
   </style>
 
   <div class="result-meta">
-    <span>{{ results|length }}개 결과 - "{{ query }}"</span>
+    <span>{{ results|length }}개 결과 - "{{ query | e }}"</span>
     <span class="result-mode">{{ mode_label }} 검색</span>
   </div>
 

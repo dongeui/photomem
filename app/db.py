@@ -354,7 +354,7 @@ def search_by_ocr(conn: sqlite3.Connection, query: str, limit: int = 20) -> list
         ORDER BY rank
         LIMIT ?
         """,
-        (f'"{term}" OR {term}*', limit),
+        (f'"{term}" OR "{term}"*', limit),
     )
     rows = cur.fetchall()
     results = []

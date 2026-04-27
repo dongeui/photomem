@@ -251,7 +251,7 @@ async def city_list():
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _date_to_ts(date_str: str, end_of_day: bool = False) -> int:
+def _date_to_ts(date_str: str, end_of_day: bool = False) -> int | None:
     from datetime import datetime
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -259,4 +259,4 @@ def _date_to_ts(date_str: str, end_of_day: bool = False) -> int:
             dt = dt.replace(hour=23, minute=59, second=59)
         return int(dt.timestamp())
     except ValueError:
-        return 0
+        return None

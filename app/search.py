@@ -61,8 +61,8 @@ def search(
         bm25_spread = worst_bm25 - best_bm25  # positive: range of BM25 scores
         for result in ocr_results:
             if bm25_spread < 1e-9:
-                # Single result or all identical — assign top OCR score
-                result["rank_score"] = 1.0
+                # Single result or all identical — use 0.8 (below ocr+clip combined hits at 1.0)
+                result["rank_score"] = 0.8
             else:
                 normalized = (worst_bm25 - result["ocr_rank"]) / bm25_spread  # 0=worst, 1=best
                 result["rank_score"] = 0.6 + 0.4 * normalized
