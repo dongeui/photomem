@@ -1,4 +1,5 @@
 import asyncio
+import html as html_module
 import logging
 import os
 import sys
@@ -145,9 +146,11 @@ async def search_photos(
     city: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    mode: str = Query("hybrid"),
 ):
     results = []
     error = None
+    search_mode = mode if mode in {"hybrid", "ocr", "semantic"} else "hybrid"
 
     if q.strip():
         try:
@@ -159,6 +162,7 @@ async def search_photos(
                 city_filter=city or None,
                 date_from=from_ts,
                 date_to=to_ts,
+                mode=search_mode,
             )
         except Exception as exc:
             error = str(exc)
@@ -174,6 +178,7 @@ async def search_photos(
             "other_results": other_results,
             "query": q,
             "error": error,
+            "mode": search_mode,
         },
     )
 
@@ -240,7 +245,7 @@ async def city_list():
         cities = [row["city"] for row in cur.fetchall()]
     finally:
         conn.close()
-    options = "".join(f'<option value="{c}">' for c in cities)
+    options = "".join(f'<option value="{html_module.escape(c, quote=True)}">' for c in cities)
     return HTMLResponse(options)
 
 

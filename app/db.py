@@ -75,7 +75,7 @@ def _ensure_ocr_fts(conn: sqlite3.Connection) -> None:
     )
     if cur.fetchone() is None:
         conn.execute(
-            "CREATE VIRTUAL TABLE photo_ocr_fts USING fts5(photo_id UNINDEXED, text_content)"
+            "CREATE VIRTUAL TABLE IF NOT EXISTS photo_ocr_fts USING fts5(photo_id UNINDEXED, text_content)"
         )
         _rebuild_ocr_fts(conn)
 

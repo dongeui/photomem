@@ -14,6 +14,7 @@ def search(
     city_filter: str | None = None,
     date_from: int | None = None,
     date_to: int | None = None,
+    mode: str = "hybrid",
 ) -> list[dict]:
     """
     Encode query text with CLIP text encoder, run KNN, return photo dicts.
@@ -23,22 +24,29 @@ def search(
         return []
 
     cleaned = query.strip()
+    normalized_mode = mode if mode in {"hybrid", "ocr", "semantic"} else "hybrid"
     conn = db.get_connection()
     try:
-        ocr_results = db.search_by_ocr(conn, cleaned, limit=limit)
-        try:
-            query_bytes = models.encode_text(cleaned)
-            clip_results = db.search_by_embedding(
-                conn,
-                query_bytes,
-                limit=limit,
-                city_filter=city_filter,
-                date_from=date_from,
-                date_to=date_to,
-            )
-        except Exception as exc:
-            logger.error("Text encoding failed: %s", exc)
-            clip_results = []
+        ocr_results = []
+        clip_results = []
+
+        if normalized_mode in {"hybrid", "ocr"}:
+            ocr_results = db.search_by_ocr(conn, cleaned, limit=limit)
+
+        if normalized_mode in {"hybrid", "semantic"}:
+            try:
+                query_bytes = models.encode_text(cleaned)
+                clip_results = db.search_by_embedding(
+                    conn,
+                    query_bytes,
+                    limit=limit,
+                    city_filter=city_filter,
+                    date_from=date_from,
+                    date_to=date_to,
+                )
+            except Exception as exc:
+                logger.error("Text encoding failed: %s", exc)
+                clip_results = []
     finally:
         conn.close()
 
@@ -50,21 +58,27 @@ def search(
     if ocr_results:
         best_bm25 = min(r["ocr_rank"] for r in ocr_results)  # most negative = best
         worst_bm25 = max(r["ocr_rank"] for r in ocr_results)
-        bm25_spread = max(abs(best_bm25 - worst_bm25), 1e-9)
+        bm25_spread = worst_bm25 - best_bm25  # positive: range of BM25 scores
         for result in ocr_results:
-            normalized = (result["ocr_rank"] - worst_bm25) / bm25_spread  # 0=worst, 1=best
-            result["rank_score"] = 0.6 + 0.4 * normalized
+            if bm25_spread < 1e-9:
+                # Single result or all identical — assign top OCR score
+                result["rank_score"] = 1.0
+            else:
+                normalized = (worst_bm25 - result["ocr_rank"]) / bm25_spread  # 0=worst, 1=best
+                result["rank_score"] = 0.6 + 0.4 * normalized
             merged.append(result)
             seen_ids.add(result["id"])
 
-    for index, result in enumerate(clip_results):
+    merged_by_id: dict[int, dict] = {r["id"]: r for r in merged}
+
+    for result in clip_results:
         result["match_reason"] = result.get("match_reason") or "clip"
         # Convert L2 distance to score. For L2-normalized vectors:
         # cosine_sim = 1 - dist^2/2. Cap at 0.65 so OCR hits can compete.
-        dist = float(result.get("distance") or 1.5)
+        dist = float(result["distance"]) if result.get("distance") is not None else 1.5
         result["rank_score"] = max(0.0, min(0.65, 1.0 - (dist ** 2) / 2))
         if result["id"] in seen_ids:
-            existing = next(item for item in merged if item["id"] == result["id"])
+            existing = merged_by_id[result["id"]]
             existing["match_reason"] = "ocr+clip"
             existing["distance"] = result.get("distance")
             existing["rank_score"] = 1.0
@@ -72,6 +86,7 @@ def search(
                 existing["ocr_text"] = result["ocr_text"]
             continue
         merged.append(result)
+        merged_by_id[result["id"]] = result
         seen_ids.add(result["id"])
 
     return merged[:limit]
